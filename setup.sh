@@ -35,6 +35,14 @@ configure_git() {
 enable_repos() {
     log_section "Section 3: Enable Repositories"
 
+    # dnf-plugins-core is required for dnf config-manager and dnf copr
+    if ! pkg_installed dnf-plugins-core; then
+        log_info "Installing dnf-plugins-core..."
+        sudo dnf install -y dnf-plugins-core 2>&1 | tee -a "$LOG_FILE"
+    else
+        log_warn "dnf-plugins-core already installed"
+    fi
+
     # RPM Fusion Free
     if ! pkg_installed rpmfusion-free-release; then
         log_info "Enabling RPM Fusion Free..."
@@ -290,6 +298,48 @@ install_node() {
     else
         "$NPM_BIN" install -g @earendil-works/pi-coding-agent 2>&1 | tee -a "$LOG_FILE"
     fi
+
+    log_info "Installing pnpm..."
+    if "$NPM_BIN" list -g pnpm &>/dev/null; then
+        log_warn "pnpm already installed"
+    else
+        "$NPM_BIN" install -g pnpm 2>&1 | tee -a "$LOG_FILE"
+    fi
+}
+
+# ─── Section 9b: SSH Key Setup ───────────────────────────────────────────────
+
+setup_ssh() {
+    log_section "Section 9b: SSH Key Setup"
+
+    local SSH_KEY="$HOME/.ssh/id_ed25519"
+
+    if [[ -f "$SSH_KEY" ]]; then
+        log_warn "SSH key already exists at $SSH_KEY, skipping"
+        return
+    fi
+
+    local EMAIL
+    EMAIL="$(git config --global user.email 2>/dev/null || echo "")"
+    if [[ -z "$EMAIL" ]]; then
+        read -rp "Email for SSH key: " EMAIL
+    fi
+
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    ssh-keygen -t ed25519 -C "$EMAIL" -f "$SSH_KEY" -N ""
+    eval "$(ssh-agent -s)"
+    ssh-add "$SSH_KEY"
+    ssh-keyscan github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+    echo ""
+    log_info "SSH key generated. Add this public key to GitHub:"
+    echo ""
+    cat "${SSH_KEY}.pub"
+    echo ""
+    log_warn "Go to: https://github.com/settings/ssh/new"
+    read -rp "Press Enter once you've added the key to GitHub..."
+    ssh -T git@github.com 2>&1 | tee -a "$LOG_FILE" || true
 }
 
 # ─── Section 10: Docker Post-install ─────────────────────────────────────────
@@ -426,6 +476,7 @@ main() {
     install_fonts
     install_shell_extras
     install_node
+    setup_ssh
     docker_postinstall
     configure_gnome
     setup_dotfiles
