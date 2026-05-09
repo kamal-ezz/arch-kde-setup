@@ -37,7 +37,7 @@ list_sections() {
     echo "  upgrade      System upgrade"
     echo "  packages     Package installation"
     echo "  ms-fonts     Microsoft fonts"
-    echo "  extra-tools  yt-dlp, Neovim"
+    echo "  extra-tools  yt-dlp, Neovim, opencode"
     echo "  flatpak      Flatpak + Flathub + Spotify"
     echo "  nvidia       NVIDIA drivers"
     echo "  fonts        MesloLGS NF fonts"
@@ -47,6 +47,7 @@ list_sections() {
     echo "  services     Docker + Bluetooth + Firewall"
     echo "  virt         Virtualization (KVM/QEMU)"
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
+    echo "  vscode       VS Code extensions + Catppuccin Mocha theme"
     echo "  gnome        GNOME configuration"
     echo "  dotfiles     Dotfiles symlinks"
     echo "  shell-default  Set zsh as default shell"
@@ -226,6 +227,15 @@ EOF
         log_warn "PyCharm COPR already enabled"
     fi
 
+    # ProtonVPN
+    if [[ ! -f /etc/yum.repos.d/protonvpn-stable.repo ]]; then
+        log_info "Adding ProtonVPN repository..."
+        sudo dnf config-manager addrepo \
+            --from-repofile="https://repo.protonvpn.com/fedora-$(rpm -E %fedora)-stable/protonvpn-stable.repo"
+    else
+        log_warn "ProtonVPN repo already configured"
+    fi
+
     summary_ok "Repositories"
 }
 
@@ -249,6 +259,7 @@ install_packages() {
         `# Dev tools` \
         docker-ce docker-ce-cli containerd.io podman \
         python3 python3-pip java-21-openjdk \
+        golang gcc gcc-c++ make cmake clang \
         `# Media & codecs` \
         vlc ffmpeg \
         gstreamer1-plugins-good gstreamer1-plugins-bad-free \
@@ -258,8 +269,9 @@ install_packages() {
         gamemode mangohud lutris goverlay wine \
         `# Apps` \
         google-chrome-stable ghostty libreoffice steam code \
+        protonvpn-cli \
         `# GNOME` \
-        papirus-icon-theme \
+        papirus-icon-theme gnome-tweaks \
         gnome-shell-extension-dash-to-dock \
         gnome-shell-extension-appindicator \
         gnome-shell-extension-manager \
@@ -336,6 +348,19 @@ install_extra_tools() {
         sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
         rm -f "$NVIM_TMP"
         summary_ok "Neovim"
+    fi
+
+    # opencode (TUI AI assistant)
+    if cmd_exists opencode; then
+        log_warn "opencode already installed"
+        summary_skip "opencode (already installed)"
+    else
+        log_info "Installing opencode..."
+        local OC_SCRIPT="/tmp/opencode-install.sh"
+        curl -fsSL https://opencode.ai/install -o "$OC_SCRIPT"
+        bash "$OC_SCRIPT"
+        rm -f "$OC_SCRIPT"
+        summary_ok "opencode"
     fi
 }
 
@@ -695,10 +720,53 @@ setup_snapper() {
     summary_ok "Snapper (Btrfs snapshots)"
 }
 
-# ─── Section 17: GNOME Configuration ─────────────────────────────────────────
+# ─── Section 17: VS Code ─────────────────────────────────────────────────────
+
+setup_vscode() {
+    log_section "Section 17: VS Code Extensions + Theme"
+
+    if ! cmd_exists code; then
+        log_warn "VS Code not installed, skipping"
+        summary_skip "VS Code setup (not installed)"
+        return
+    fi
+
+    local EXTENSIONS=(
+        "Catppuccin.catppuccin-vsc"
+        "Catppuccin.catppuccin-vsc-icons"
+    )
+
+    for ext in "${EXTENSIONS[@]}"; do
+        log_info "Installing VS Code extension: $ext"
+        code --install-extension "$ext" --force
+    done
+
+    local VSCODE_SETTINGS="$HOME/.config/Code/User/settings.json"
+    if [[ -f "$VSCODE_SETTINGS" ]]; then
+        log_warn "VS Code settings.json already exists, skipping"
+        summary_skip "VS Code settings (already exists)"
+    else
+        mkdir -p "$(dirname "$VSCODE_SETTINGS")"
+        cat > "$VSCODE_SETTINGS" <<'EOF'
+{
+  "workbench.colorTheme": "Catppuccin Mocha",
+  "workbench.iconTheme": "catppuccin-mocha",
+  "editor.fontFamily": "'MesloLGS NF', 'Droid Sans Mono', monospace",
+  "editor.fontSize": 14,
+  "editor.fontLigatures": true,
+  "window.titleBarStyle": "custom",
+  "workbench.startupEditor": "none"
+}
+EOF
+        log_info "VS Code settings.json written with Catppuccin Mocha theme."
+        summary_ok "VS Code Catppuccin Mocha"
+    fi
+}
+
+# ─── Section 18: GNOME Configuration ─────────────────────────────────────────
 
 configure_gnome() {
-    log_section "Section 17: GNOME Configuration"
+    log_section "Section 18: GNOME Configuration"
 
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session detected (running via SSH?). Skipping GNOME settings."
@@ -800,6 +868,12 @@ EOF
     gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || \
         log_warn "AppIndicator will activate after logout/login"
 
+    # Dash-to-dock: black opaque background
+    gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'FIXED'
+    gsettings set org.gnome.shell.extensions.dash-to-dock custom-background-color true
+    gsettings set org.gnome.shell.extensions.dash-to-dock background-color '#000000'
+    gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 1.0
+
     log_warn "GNOME extensions require logout/login to activate."
     summary_ok "GNOME configuration"
 }
@@ -807,7 +881,7 @@ EOF
 # ─── Section 18: Dotfiles ────────────────────────────────────────────────────
 
 setup_dotfiles() {
-    log_section "Section 18: Dotfiles"
+    log_section "Section 19: Dotfiles"
 
     local FILES=(
         ".zshrc"
@@ -842,7 +916,7 @@ setup_dotfiles() {
 # ─── Section 19: Default Shell ───────────────────────────────────────────────
 
 set_default_shell() {
-    log_section "Section 19: Default Shell"
+    log_section "Section 20: Default Shell"
 
     local ZSH_PATH
     ZSH_PATH="$(command -v zsh)"
@@ -923,6 +997,7 @@ main() {
     run_section services      setup_services
     run_section virt          setup_virtualization
     run_section snapper       setup_snapper
+    run_section vscode        setup_vscode
     run_section gnome         configure_gnome
     run_section dotfiles      setup_dotfiles
     run_section shell-default set_default_shell
