@@ -50,6 +50,7 @@ list_sections() {
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
     echo "  vscode       VS Code extensions + Catppuccin Mocha theme"
     echo "  gnome        GNOME configuration"
+    echo "  rice         Catppuccin GTK/cursor, Inter font, Blur my Shell, Night Light"
     echo "  dotfiles     Dotfiles symlinks"
     echo "  shell-default  Set zsh as default shell"
     echo ""
@@ -107,6 +108,41 @@ run_section() {
     else
         log_warn "Skipping: $slug"
     fi
+}
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+install_gnome_ext() {
+    local uuid="$1"
+    local name="$2"
+
+    if gnome-extensions list 2>/dev/null | grep -q "^${uuid}$"; then
+        log_warn "Extension $name already installed"
+        return
+    fi
+
+    local GNOME_VER
+    GNOME_VER=$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1)
+
+    local EXT_INFO
+    EXT_INFO=$(curl -fsSL \
+        "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=${GNOME_VER}" 2>/dev/null)
+
+    local DOWNLOAD_URL
+    DOWNLOAD_URL=$(python3 -c \
+        "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('download_url',''))" \
+        <<< "$EXT_INFO" 2>/dev/null)
+
+    if [[ -z "$DOWNLOAD_URL" ]]; then
+        log_warn "Could not resolve download URL for $name (GNOME $GNOME_VER)"
+        return
+    fi
+
+    local EXT_ZIP="/tmp/${uuid}.zip"
+    curl -fsSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o "$EXT_ZIP"
+    gnome-extensions install --force "$EXT_ZIP"
+    rm -f "$EXT_ZIP"
+    log_info "Installed extension: $name"
 }
 
 # ─── Section 1: Git Config ────────────────────────────────────────────────────
@@ -992,10 +1028,118 @@ EOF
     summary_ok "GNOME configuration"
 }
 
-# ─── Section 20: Dotfiles ────────────────────────────────────────────────────
+# ─── Section 20: Ricing ───────────────────────────────────────────────────────
+
+setup_rice() {
+    log_section "Section 20: Ricing (Catppuccin theme + cursor + fonts + extensions)"
+
+    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        log_warn "No D-Bus session — skipping rice setup"
+        summary_skip "Rice (no D-Bus session)"
+        return
+    fi
+
+    # Inter font
+    if ls "$HOME/.local/share/fonts/" 2>/dev/null | grep -qi "^inter"; then
+        log_warn "Inter font already installed"
+    else
+        log_info "Installing Inter font..."
+        local INTER_ZIP="/tmp/inter.zip"
+        local INTER_URL
+        INTER_URL=$(curl -fsSL https://api.github.com/repos/rsms/inter/releases/latest \
+            | grep -o '"browser_download_url": *"[^"]*Inter[^"]*\.zip"' \
+            | grep -o 'https://[^"]*' | head -1)
+        curl -fLo "$INTER_ZIP" "$INTER_URL"
+        mkdir -p "$HOME/.local/share/fonts/Inter"
+        unzip -q "$INTER_ZIP" "*.ttf" -d "$HOME/.local/share/fonts/Inter" 2>/dev/null || \
+            unzip -q "$INTER_ZIP" -d "$HOME/.local/share/fonts/Inter"
+        fc-cache -f "$HOME/.local/share/fonts"
+        rm -f "$INTER_ZIP"
+        log_info "Inter font installed."
+    fi
+
+    # Catppuccin GTK theme
+    if ls "$HOME/.local/share/themes/" 2>/dev/null | grep -qi "catppuccin.*mocha"; then
+        log_warn "Catppuccin GTK theme already installed"
+    else
+        log_info "Installing Catppuccin GTK theme..."
+        local THEME_ZIP="/tmp/catppuccin-gtk.zip"
+        local THEME_URL
+        THEME_URL=$(curl -fsSL https://api.github.com/repos/catppuccin/gtk/releases/latest \
+            | grep -oi '"browser_download_url": *"[^"]*[Mm]ocha[^"]*[Bb]lue[^"]*[Dd]ark[^"]*\.zip"' \
+            | grep -o 'https://[^"]*' | head -1)
+        if [[ -z "$THEME_URL" ]]; then
+            log_warn "Could not resolve Catppuccin GTK theme URL, skipping"
+        else
+            curl -fLo "$THEME_ZIP" "$THEME_URL"
+            mkdir -p "$HOME/.local/share/themes"
+            unzip -q "$THEME_ZIP" -d "$HOME/.local/share/themes/"
+            rm -f "$THEME_ZIP"
+            log_info "Catppuccin GTK theme installed."
+        fi
+    fi
+
+    # Catppuccin cursor
+    if ls "$HOME/.local/share/icons/" 2>/dev/null | grep -qi "catppuccin.*mocha.*cursor"; then
+        log_warn "Catppuccin cursor already installed"
+    else
+        log_info "Installing Catppuccin cursor..."
+        local CURSOR_ZIP="/tmp/catppuccin-cursors.zip"
+        local CURSOR_URL
+        CURSOR_URL=$(curl -fsSL https://api.github.com/repos/catppuccin/cursors/releases/latest \
+            | grep -oi '"browser_download_url": *"[^"]*mocha[^"]*dark[^"]*\.zip"' \
+            | grep -o 'https://[^"]*' | head -1)
+        if [[ -z "$CURSOR_URL" ]]; then
+            log_warn "Could not resolve Catppuccin cursor URL, skipping"
+        else
+            curl -fLo "$CURSOR_ZIP" "$CURSOR_URL"
+            mkdir -p "$HOME/.local/share/icons"
+            unzip -q "$CURSOR_ZIP" -d "$HOME/.local/share/icons/"
+            rm -f "$CURSOR_ZIP"
+            log_info "Catppuccin cursor installed."
+        fi
+    fi
+
+    # Apply themes
+    local GTK_THEME
+    GTK_THEME=$(ls "$HOME/.local/share/themes/" 2>/dev/null | grep -i "catppuccin.*mocha" | head -1)
+    [[ -n "$GTK_THEME" ]] && \
+        gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME"
+
+    local CURSOR_THEME
+    CURSOR_THEME=$(ls "$HOME/.local/share/icons/" 2>/dev/null | grep -i "catppuccin.*mocha.*cursor" | head -1)
+    [[ -n "$CURSOR_THEME" ]] && \
+        gsettings set org.gnome.desktop.interface cursor-theme "$CURSOR_THEME"
+
+    gsettings set org.gnome.desktop.interface font-name          'Inter 11'
+    gsettings set org.gnome.desktop.interface document-font-name 'Inter 11'
+    gsettings set org.gnome.desktop.interface monospace-font-name 'MesloLGS NF 11'
+    gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Inter Bold 11'
+
+    # GNOME extensions
+    install_gnome_ext "blur-my-shell@aunetx"           "Blur my Shell"
+    install_gnome_ext "rounded-window-corners@fxgn"    "Rounded Window Corners Reborn"
+
+    gnome-extensions enable user-theme@gnome-shell-extensions.gcampax.github.com 2>/dev/null || true
+    gnome-extensions enable blur-my-shell@aunetx 2>/dev/null || \
+        log_warn "Blur my Shell will activate after logout/login"
+    gnome-extensions enable rounded-window-corners@fxgn 2>/dev/null || \
+        log_warn "Rounded Window Corners will activate after logout/login"
+
+    # Night Light (8pm → 7am, warm 4000K)
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled           true
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-automatic false
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-from      20.0
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-to        7.0
+    gsettings set org.gnome.settings-daemon.plugins.color night-light-temperature        4000
+
+    summary_ok "Ricing"
+}
+
+# ─── Section 21: Dotfiles ────────────────────────────────────────────────────
 
 setup_dotfiles() {
-    log_section "Section 20: Dotfiles"
+    log_section "Section 21: Dotfiles"
 
     local FILES=(
         ".zshrc"
@@ -1027,10 +1171,10 @@ setup_dotfiles() {
     summary_ok "Dotfiles"
 }
 
-# ─── Section 21: Default Shell ───────────────────────────────────────────────
+# ─── Section 22: Default Shell ───────────────────────────────────────────────
 
 set_default_shell() {
-    log_section "Section 21: Default Shell"
+    log_section "Section 22: Default Shell"
 
     local ZSH_PATH
     ZSH_PATH="$(command -v zsh)"
@@ -1114,6 +1258,7 @@ main() {
     run_section snapper       setup_snapper
     run_section vscode        setup_vscode
     run_section gnome         configure_gnome
+    run_section rice          setup_rice
     run_section dotfiles      setup_dotfiles
     run_section shell-default set_default_shell
 
