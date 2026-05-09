@@ -112,7 +112,7 @@ install_packages() {
     log_section "Section 5: Package Installation"
 
     local SYSTEM_TOOLS=(
-        zsh git gh curl wget unzip tar bat fzf htop
+        zsh git gh curl wget unzip tar bat fzf htop cabextract
     )
 
     local DEV_TOOLS=(
@@ -142,11 +142,34 @@ install_packages() {
         gnome-shell-extension-dash-to-dock
         gnome-shell-extension-appindicator
         gnome-shell-extension-manager
+        google-noto-sans-arabic-fonts
+        google-noto-naskh-arabic-fonts
+        amiri-fonts
     )
 
     for pkg in "${SYSTEM_TOOLS[@]}" "${DEV_TOOLS[@]}" "${MEDIA[@]}" "${APPS[@]}"; do
         dnf_install "$pkg"
     done
+}
+
+# ─── Section 5b: Microsoft Fonts ─────────────────────────────────────────────
+
+install_ms_fonts() {
+    log_section "Section 5b: Microsoft Fonts"
+
+    if rpm -q msttcore-fonts-installer &>/dev/null; then
+        log_warn "Microsoft fonts already installed, skipping"
+        return
+    fi
+
+    local RPM_URL="https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
+    local TMP_RPM="/tmp/msttcore-fonts-installer.rpm"
+
+    log_info "Downloading Microsoft fonts installer..."
+    curl -fLo "$TMP_RPM" "$RPM_URL" 2>&1 | tee -a "$LOG_FILE"
+    sudo dnf install -y "$TMP_RPM" 2>&1 | tee -a "$LOG_FILE"
+    rm -f "$TMP_RPM"
+    log_info "Microsoft fonts installed."
 }
 
 # ─── Section 6: NVIDIA Drivers ───────────────────────────────────────────────
@@ -385,6 +408,9 @@ configure_gnome() {
         xdg-mime default vlc.desktop "$mime"
     done
 
+    log_info "Adding Arabic keyboard layout..."
+    gsettings set org.gnome.desktop.input-sources sources "[('xkb', 'us'), ('xkb', 'ara')]"
+
     log_info "Setting touchpad secondary click to corner push..."
     gsettings set org.gnome.desktop.peripherals.touchpad click-method 'areas'
 
@@ -415,6 +441,7 @@ setup_dotfiles() {
         ".zshrc"
         ".p10k.zsh"
         ".config/ghostty/config"
+        ".config/fontconfig/fonts.conf"
     )
 
     mkdir -p "$BACKUP_DIR"
@@ -491,6 +518,7 @@ main() {
     enable_repos
     system_upgrade
     install_packages
+    install_ms_fonts
     install_nvidia
     install_fonts
     install_shell_extras
