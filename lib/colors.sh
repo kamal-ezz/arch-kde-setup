@@ -7,19 +7,19 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 log_info() {
-    echo -e "${GREEN}[INFO]${NC}  $*" | tee -a "$LOG_FILE"
+    echo -e "${GREEN}[INFO]${NC}  $*"
 }
 
 log_warn() {
-    echo -e "${YELLOW}[SKIP]${NC}  $*" | tee -a "$LOG_FILE"
+    echo -e "${YELLOW}[WARN]${NC}  $*"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $*" | tee -a "$LOG_FILE"
+    echo -e "${RED}[ERROR]${NC} $*"
 }
 
 log_section() {
-    echo -e "\n${BLUE}══════════════════════════════════════${NC}" | tee -a "$LOG_FILE"
-    echo -e "${BLUE} $*${NC}" | tee -a "$LOG_FILE"
-    echo -e "${BLUE}══════════════════════════════════════${NC}" | tee -a "$LOG_FILE"
+    echo -e "\n${BLUE}══════════════════════════════════════${NC}"
+    echo -e "${BLUE} $*${NC}"
+    echo -e "${BLUE}══════════════════════════════════════${NC}"
 }
