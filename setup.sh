@@ -172,6 +172,57 @@ install_ms_fonts() {
     log_info "Microsoft fonts installed."
 }
 
+# ─── Section 5c: yt-dlp, Neovim, VS Code ─────────────────────────────────────
+
+install_extra_tools() {
+    log_section "Section 5c: yt-dlp, Neovim, VS Code"
+
+    mkdir -p "$HOME/.local/bin"
+
+    # yt-dlp
+    if cmd_exists yt-dlp; then
+        log_warn "yt-dlp already installed"
+    else
+        log_info "Installing yt-dlp..."
+        curl -fLo "$HOME/.local/bin/yt-dlp" \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+        chmod +x "$HOME/.local/bin/yt-dlp"
+        log_info "yt-dlp installed."
+    fi
+
+    # Neovim (tarball → /opt/nvim)
+    if cmd_exists nvim; then
+        log_warn "Neovim already installed"
+    else
+        log_info "Installing Neovim..."
+        local NVIM_TMP="/tmp/nvim-linux-x86_64.tar.gz"
+        curl -fLo "$NVIM_TMP" \
+            https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+        sudo tar -C /opt -xzf "$NVIM_TMP"
+        sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
+        rm -f "$NVIM_TMP"
+        log_info "Neovim installed."
+    fi
+
+    # VS Code (Microsoft repo)
+    if cmd_exists code; then
+        log_warn "VS Code already installed"
+    else
+        log_info "Installing VS Code..."
+        sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
+        sudo tee /etc/yum.repos.d/vscode.repo > /dev/null <<'EOF'
+[code]
+name=Visual Studio Code
+baseurl=https://packages.microsoft.com/yumrepos/vscode
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.microsoft.com/keys/microsoft.asc
+EOF
+        sudo dnf install -y code 2>&1 | tee -a "$LOG_FILE"
+        log_info "VS Code installed."
+    fi
+}
+
 # ─── Section 6: NVIDIA Drivers ───────────────────────────────────────────────
 
 install_nvidia() {
@@ -519,6 +570,7 @@ main() {
     system_upgrade
     install_packages
     install_ms_fonts
+    install_extra_tools
     install_nvidia
     install_fonts
     install_shell_extras
