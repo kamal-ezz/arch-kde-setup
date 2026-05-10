@@ -538,10 +538,15 @@ install_packages() {
                 $(pkgs_gaming) \
                 $(pkgs_libreoffice) \
                 $(pkgs_steam) \
-                $(pkgs_gnome) \
+                $(pkgs_themes) \
                 $(pkgs_qt) \
                 $(pkgs_fonts_arabic) \
                 $(pkgs_bluetooth)
+
+    # GNOME-only packages (gnome-tweaks, dash-to-dock, appindicator)
+    if require_desktop gnome; then
+        pkg_install $(pkgs_gnome_only)
+    fi
 
     install_chrome
     install_vscode
@@ -579,8 +584,10 @@ install_packages() {
         esac
     fi
 
-    # Remove preinstalled GNOME bloat
-    pkg_remove $(pkgs_bloat)
+    # Remove preinstalled GNOME bloat (only relevant on GNOME)
+    if require_desktop gnome; then
+        pkg_remove $(pkgs_bloat)
+    fi
 
     summary_ok "Packages"
 }
@@ -803,13 +810,17 @@ setup_flatpak() {
         summary_ok "Spotify"
     fi
 
-    # GNOME Extension Manager is distributed via Flathub as documented upstream.
-    if flatpak list 2>/dev/null | grep -q "com.mattjakeman.ExtensionManager"; then
-        log_warn "Extension Manager already installed"
+    # GNOME Extension Manager from Flathub — only useful on GNOME.
+    if require_desktop gnome; then
+        if flatpak list 2>/dev/null | grep -q "com.mattjakeman.ExtensionManager"; then
+            log_warn "Extension Manager already installed"
+        else
+            log_info "Installing GNOME Extension Manager from Flathub..."
+            flatpak install -y flathub com.mattjakeman.ExtensionManager
+            summary_ok "GNOME Extension Manager"
+        fi
     else
-        log_info "Installing GNOME Extension Manager from Flathub..."
-        flatpak install -y flathub com.mattjakeman.ExtensionManager
-        summary_ok "GNOME Extension Manager"
+        summary_skip "GNOME Extension Manager (not on GNOME)"
     fi
 }
 
@@ -1484,6 +1495,12 @@ EOF
 configure_gnome() {
     log_section "Section 20: GNOME Configuration"
 
+    if ! require_desktop gnome; then
+        log_warn "Not running GNOME (detected: $DESKTOP_ENV) — skipping GNOME settings."
+        summary_skip "GNOME config (not on GNOME)"
+        return
+    fi
+
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session detected (running via SSH?). Skipping GNOME settings."
         summary_skip "GNOME config (no D-Bus session)"
@@ -1644,6 +1661,12 @@ EOF
 
 setup_rice() {
     log_section "Section 21: Ricing (Catppuccin cursor + fonts + extensions)"
+
+    if ! require_desktop gnome; then
+        log_warn "Not running GNOME (detected: $DESKTOP_ENV) — skipping ricing (theme apply is GNOME-specific)."
+        summary_skip "Rice (not on GNOME)"
+        return
+    fi
 
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session — skipping rice setup"

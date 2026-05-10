@@ -280,3 +280,39 @@ require_distro() {
     done
     return 1
 }
+
+# ─── desktop environment detection ────────────────────────────────────────────
+
+# Sets DESKTOP_ENV to one of: gnome, kde, xfce, cinnamon, mate, lxqt, other, none
+detect_desktop() {
+    local raw="${XDG_CURRENT_DESKTOP:-}${DESKTOP_SESSION:-}"
+    raw="${raw,,}"   # lowercase
+
+    if [[ -z "$raw" ]]; then
+        DESKTOP_ENV=none
+    elif [[ "$raw" == *gnome* || "$raw" == *unity* ]]; then
+        DESKTOP_ENV=gnome
+    elif [[ "$raw" == *kde* || "$raw" == *plasma* ]]; then
+        DESKTOP_ENV=kde
+    elif [[ "$raw" == *xfce* ]]; then
+        DESKTOP_ENV=xfce
+    elif [[ "$raw" == *cinnamon* ]]; then
+        DESKTOP_ENV=cinnamon
+    elif [[ "$raw" == *mate* ]]; then
+        DESKTOP_ENV=mate
+    elif [[ "$raw" == *lxqt* ]]; then
+        DESKTOP_ENV=lxqt
+    else
+        DESKTOP_ENV=other
+    fi
+    export DESKTOP_ENV
+}
+
+# require_desktop gnome [kde …] — return 0 if current DE matches one of args.
+require_desktop() {
+    local de
+    for de in "$@"; do
+        [[ "$DESKTOP_ENV" == "$de" ]] && return 0
+    done
+    return 1
+}

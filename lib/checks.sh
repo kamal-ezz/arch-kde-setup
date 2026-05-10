@@ -15,6 +15,12 @@ preflight_checks() {
         log_warn "Non-Fedora paths are best-effort and untested. Report issues if you hit them."
     fi
 
+    detect_desktop
+    log_info "Desktop environment: $DESKTOP_ENV"
+    if [[ "$DESKTOP_ENV" != "gnome" && "$DESKTOP_ENV" != "none" ]]; then
+        log_warn "GNOME-specific sections (Section 20 GNOME config, Section 21 ricing) will be skipped on $DESKTOP_ENV."
+    fi
+
     if ! sudo -v 2>/dev/null; then
         log_error "sudo access is required but not available."
         exit 1

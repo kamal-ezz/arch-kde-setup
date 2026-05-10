@@ -85,23 +85,20 @@ pkgs_steam() {
     esac
 }
 
-# ─── GNOME tweaks / extensions / themes ───────────────────────────────────────
+# ─── Icon themes (universal) ─────────────────────────────────────────────────
 
-pkgs_gnome() {
+pkgs_themes() {
+    # papirus works under any DE; the apply-step is DE-specific (not done here)
+    echo "papirus-icon-theme"
+}
+
+# ─── GNOME-only: tweaks + shell extensions ────────────────────────────────────
+
+pkgs_gnome_only() {
     case "$DISTRO_FAMILY" in
-        fedora)
-            echo "papirus-icon-theme gnome-tweaks \
-                  gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator"
-            ;;
-        debian)
-            echo "papirus-icon-theme gnome-tweaks \
-                  gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator"
-            ;;
-        arch)
-            # dash-to-dock and appindicator are AUR on Arch (non-git releases)
-            echo "papirus-icon-theme gnome-tweaks \
-                  gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator"
-            ;;
+        fedora) echo "gnome-tweaks gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator" ;;
+        debian) echo "gnome-tweaks gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator" ;;
+        arch)   echo "gnome-tweaks gnome-shell-extension-dash-to-dock gnome-shell-extension-appindicator" ;;
     esac
 }
 
