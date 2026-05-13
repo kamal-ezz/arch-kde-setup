@@ -13,7 +13,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="$HOME/.linux-setup.log"
+LOG_FILE="$HOME/.unix-setup.log"
 DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
 BACKUP_DIR="$HOME/.dotfiles_backup/$(date +%Y%m%d_%H%M%S)"
 START_TIME=$(date +%s)
