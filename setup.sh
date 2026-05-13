@@ -61,6 +61,7 @@ list_sections() {
     echo "  gnome        GNOME configuration"
     echo "  rice         Catppuccin cursor, Geist font, Blur my Shell, Night Light"
     echo "  dotfiles     Dotfiles symlinks"
+    echo "  relink       Re-point dotfile symlinks after the repo is moved/renamed (run as --only relink)"
     echo "  shell-default  Set zsh as default shell"
     echo ""
     echo "Examples:"
@@ -98,10 +99,12 @@ parse_args() {
 
 should_run() {
     local section="$1"
-    # Hidden/manual section: only runs when explicitly requested with --only.
-    if [[ "$section" == "steam-components" && ${#ONLY_SECTIONS[@]} -eq 0 ]]; then
-        return 1
-    fi
+    # Hidden/manual sections: only run when explicitly requested with --only.
+    case "$section" in
+        steam-components|relink)
+            [[ ${#ONLY_SECTIONS[@]} -eq 0 ]] && return 1
+            ;;
+    esac
     if [[ ${#ONLY_SECTIONS[@]} -gt 0 ]]; then
         for s in "${ONLY_SECTIONS[@]}"; do
             [[ "$s" == "$section" ]] && return 0
@@ -2195,6 +2198,51 @@ setup_dotfiles() {
     summary_ok "Dotfiles"
 }
 
+# ─── Section 22b: Relink Dotfiles ────────────────────────────────────────────
+# Recovery helper for after the repo directory is renamed/moved. Walks every
+# symlink under $HOME that points into a path containing /dotfiles/ and
+# re-points it at $DOTFILES_DIR/<same-relative-path>. Safe to run anytime —
+# real files are left alone and correctly-targeted links stay no-ops.
+#
+# Run with:  bash setup.sh --only relink
+
+relink_dotfiles() {
+    log_section "Section 22b: Relink Dotfiles"
+
+    local SEARCH_DIRS=("$HOME")
+    is_macos && SEARCH_DIRS+=("$HOME/Library/Application Support")
+
+    local fixed=0 ok=0 missing=0
+    while IFS= read -r link; do
+        local current new rel
+        current="$(readlink "$link")"
+        # Extract the path component after the LAST "/dotfiles/" in the target,
+        # so we work regardless of what the parent repo dir used to be called.
+        rel="${current##*/dotfiles/}"
+        new="$DOTFILES_DIR/$rel"
+
+        if [[ "$current" == "$new" ]]; then
+            ok=$((ok + 1))
+            continue
+        fi
+        if [[ ! -e "$new" ]]; then
+            log_warn "No source for $link → expected $new"
+            missing=$((missing + 1))
+            continue
+        fi
+        ln -sfn "$new" "$link"
+        log_info "Repointed ~${link#$HOME} → $new"
+        fixed=$((fixed + 1))
+    done < <(find "${SEARCH_DIRS[@]}" -maxdepth 8 -type l -lname "*/dotfiles/*" 2>/dev/null)
+
+    log_info "Relink summary: $fixed repointed, $ok already correct, $missing missing"
+    if [[ "$missing" -gt 0 ]]; then
+        summary_fail "Relink dotfiles ($missing missing sources)"
+    else
+        summary_ok "Relink dotfiles ($fixed repointed, $ok already correct)"
+    fi
+}
+
 # ─── Section 23: Default Shell ───────────────────────────────────────────────
 
 set_default_shell() {
@@ -2294,6 +2342,7 @@ main() {
     run_section gnome         configure_gnome
     run_section rice          setup_rice
     run_section dotfiles      setup_dotfiles
+    run_section relink        relink_dotfiles
     run_section shell-default set_default_shell
 
     print_summary
