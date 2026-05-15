@@ -20,9 +20,9 @@
 
 pkgs_system_tools() {
     case "$DISTRO_FAMILY" in
-        fedora) echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch" ;;
-        debian) echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch" ;;
-        arch)   echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch" ;;
+        fedora) echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch fuse fuse-libs" ;;
+        debian) echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch fuse libfuse2" ;;
+        arch)   echo "zsh git curl wget unzip tar bat fzf htop cabextract fastfetch fuse2" ;;
         darwin) echo "zsh git curl wget unzip bat fzf htop fastfetch" ;;
     esac
 }

@@ -1,3 +1,6 @@
+# fnm must be initialized before the instant prompt to avoid console output warnings.
+eval "$(fnm env --use-on-cd --shell zsh 2>/dev/null)" 2>/dev/null || true
+
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
 # Initialization code that may require console input (password prompts, [y/n]
 # confirmations, etc.) must go above this block; everything else may go below.
@@ -144,8 +147,6 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     eval "$(/usr/local/bin/brew shellenv)"
   fi
 fi
-
-eval "$(fnm env --use-on-cd --shell zsh)"
 
 # bun completions
 [ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"
