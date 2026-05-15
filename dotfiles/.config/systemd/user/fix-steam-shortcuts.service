@@ -1,0 +1,6 @@
+[Unit]
+Description=Fix StartupWMClass on Steam shortcut .desktop files
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/fix-steam-shortcuts

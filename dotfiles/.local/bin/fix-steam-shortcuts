@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Add StartupWMClass=steam_app_<appid> to any Steam-launched .desktop file
+# in ~/.local/share/applications that's missing it.
+# Idempotent — runs as a oneshot service triggered by a systemd path unit.
+set -euo pipefail
+
+APPS_DIR="$HOME/.local/share/applications"
+[[ -d "$APPS_DIR" ]] || exit 0
+
+fixed=0
+shopt -s nullglob
+for desktop in "$APPS_DIR"/*.desktop; do
+    appid=$(grep -oP 'steam://rungameid/\K[0-9]+' "$desktop" 2>/dev/null | head -1 || true)
+    [[ -n "$appid" ]] || continue
+    grep -q '^StartupWMClass=' "$desktop" && continue
+    echo "StartupWMClass=steam_app_${appid}" >> "$desktop"
+    echo "fixed: $(basename "$desktop") → steam_app_${appid}"
+    fixed=$((fixed + 1))
+done
+
+(( fixed > 0 )) && update-desktop-database "$APPS_DIR" 2>/dev/null || true
+exit 0

@@ -156,3 +156,10 @@ export PATH="$BUN_INSTALL/bin:$PATH"
 
 # opencode
 export PATH="$HOME/.opencode/bin:$PATH"
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/home/kamal/.local/share/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kamal/.local/share/google-cloud-sdk/completion.zsh.inc'; fi
+
+# >>> grok installer >>>
+export PATH="$HOME/.grok/bin:$PATH"
+# <<< grok installer <<<

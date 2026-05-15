@@ -42,7 +42,23 @@
       "WebFetch(domain:fariszr.com)",
       "WebFetch(domain:itsfoss.gitlab.io)",
       "Bash(bash -n /home/kamal/Projects/fedora/lib/utils.sh)",
-      "WebFetch(domain:protonvpn.com)"
+      "WebFetch(domain:protonvpn.com)",
+      "Bash(gsettings list-schemas *)",
+      "Bash(dconf list *)",
+      "Bash(dconf write *)",
+      "Bash(dnf search *)",
+      "Bash(curl -s https://api.github.com/repos/catppuccin/gtk/releases/latest)",
+      "Bash(mkdir -p ~/.local/share/themes)",
+      "Read(//tmp/**)",
+      "Bash(curl -fsSL \"https://github.com/catppuccin/gtk/releases/download/v1.0.3/catppuccin-mocha-mauve-standard%2Bdefault.zip\" -o catppuccin-mocha-mauve.zip)",
+      "Bash(unzip -q catppuccin-mocha-mauve.zip -d ~/.local/share/themes/)",
+      "Bash(rm catppuccin-mocha-mauve.zip)",
+      "Bash(gsettings set *)",
+      "Bash(gnome-extensions install *)",
+      "Bash(pkg_install gnome-shell-extension-user-theme *)",
+      "Bash(curl -s https://api.github.com/repos/catppuccin/gnome-shell/releases/latest)",
+      "Bash(curl -s \"https://api.github.com/repos/catppuccin/gnome-shell/releases\")",
+      "Bash(curl -s \"https://api.github.com/repos/catppuccin/gtk/releases/latest\")"
     ]
   }
 }

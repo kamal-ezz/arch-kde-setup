@@ -1087,6 +1087,21 @@ EOF
         log_warn "zen-update script not found; run --only dotfiles first, then re-run --only zen to enable the timer"
     fi
 
+    # Copy Zen mods and keyboard shortcuts to the active profile
+    local zen_profile
+    zen_profile=$(grep '^Path=' "$HOME/.config/zen/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2)
+    if [[ -n "$zen_profile" ]]; then
+        local profile_dir="$HOME/.config/zen/$zen_profile"
+        for f in zen-themes.json zen-keyboard-shortcuts.json; do
+            if [[ -f "$DOTFILES_DIR/.config/zen/$f" ]]; then
+                cp "$DOTFILES_DIR/.config/zen/$f" "$profile_dir/$f"
+                log_info "Installed Zen $f → $profile_dir"
+            fi
+        done
+    else
+        log_warn "Could not detect Zen profile path — skipping mods install"
+    fi
+
     summary_ok "Zen Browser $version"
 }
 
