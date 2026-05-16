@@ -22,8 +22,18 @@ preflight_checks() {
 
     detect_desktop
     log_info "Desktop environment: $DESKTOP_ENV"
-    if is_linux && [[ "$DESKTOP_ENV" != "gnome" && "$DESKTOP_ENV" != "none" ]]; then
-        log_warn "GNOME-specific sections (Section 20 GNOME config, Section 21 ricing) will be skipped on $DESKTOP_ENV."
+    if is_linux; then
+        case "$DESKTOP_ENV" in
+            gnome|kde)
+                log_info "Desktop-specific sections will be selected for $DESKTOP_ENV"
+                ;;
+            none)
+                log_warn "No desktop session detected — desktop-specific sections will be skipped."
+                ;;
+            *)
+                log_warn "Unsupported desktop ($DESKTOP_ENV) — GNOME/KDE-specific sections will be skipped."
+                ;;
+        esac
     fi
 
     if ! sudo -v 2>/dev/null; then

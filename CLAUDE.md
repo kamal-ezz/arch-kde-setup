@@ -9,9 +9,9 @@ A personal post-install / dotfiles repo for a Linux workstation (primary target:
 ## Commands
 
 ```bash
-bash setup.sh                        # run all sections
+bash setup.sh                        # run all compatible sections
 bash setup.sh --list                 # enumerate sections
-bash setup.sh --only gnome dotfiles  # run only listed sections
+bash setup.sh --only kde dotfiles    # run only listed sections
 bash setup.sh --skip nvidia snapper  # run all except listed
 ENABLE_STRICT_CRYPTO=1 ENABLE_DNS_OVER_TLS=1 bash setup.sh --only security
 
@@ -25,10 +25,11 @@ ENABLE_STRICT_CRYPTO=1 ENABLE_DNS_OVER_TLS=1 bash setup.sh --only security
 
 ## Architecture
 
-**`setup.sh`** is one monolithic orchestrator (~2400 lines). It sources the four `lib/*.sh` helpers, parses `--only`/`--skip`, then calls `run_section <slug> <fn>` once per section in fixed order (`main` at the bottom). Section ordering matters — e.g. `repos` must precede `packages`, `shell` precedes `node` (fnm via Oh My Zsh plugin path), `gnome` precedes `rice` (rice tweaks the configured GNOME).
+**`setup.sh`** is one monolithic orchestrator (~2400 lines). It sources the four `lib/*.sh` helpers, parses `--only`/`--skip`, then calls `run_section <slug> <fn>` once per section in fixed order (`main` at the bottom). Section ordering matters — e.g. `repos` must precede `packages`, `shell` precedes `node` (fnm via Oh My Zsh plugin path), and desktop sections run after shared app setup. Plain `bash setup.sh` is intended to be desktop-aware: GNOME-only sections run only on GNOME, KDE-only sections run only on KDE Plasma.
 
-Two filter lists control gating:
+Three gates control section execution:
 - `NETWORK_SECTIONS` (in `setup.sh`) — sections short-circuited when offline via `require_internet`.
+- `section_supported_on_desktop` (in `setup.sh`) — skips desktop-specific sections before network checks, so KDE/GNOME-only work stays harmless in a plain full run.
 - Hidden sections (`steam-components`, `relink`) only run when named explicitly in `--only`.
 
 **`lib/distro.sh`** is the cross-distro abstraction. After `detect_distro` it sets `DISTRO`, `DISTRO_FAMILY`, `PKG_MGR` (`dnf|apt|pacman|brew`) and exposes a uniform API: `pkg_install`, `pkg_install_one`, `pkg_installed`, `pkg_available`, `pkg_swap`, `pm_upgrade`, `add_repo`, `install_local_pkg`, plus `is_linux`/`is_macos`/`require_linux` guards. Section functions should call these rather than branching on `PKG_MGR` directly — only add a `case "$PKG_MGR"` when the operation is genuinely distro-specific (repo configuration, distro-only packages like `akmod-nvidia`). `lib/packages.sh` holds the per-distro package name maps used by `install_packages`.

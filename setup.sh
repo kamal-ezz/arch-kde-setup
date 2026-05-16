@@ -6,7 +6,7 @@
 # Best-effort, untested on: Ubuntu, Debian, Arch.
 #
 # Usage:
-#   bash setup.sh                        # run all sections
+#   bash setup.sh                        # run all compatible sections
 #   bash setup.sh --only kde dotfiles    # run only these sections
 #   bash setup.sh --skip nvidia snapper  # run all except these
 #   bash setup.sh --list                 # list available sections
@@ -58,9 +58,9 @@ list_sections() {
     echo "  virt         Virtualization (KVM/QEMU)"
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
     echo "  vscode       VS Code extensions + Catppuccin Mocha theme"
-    echo "  gnome        GNOME configuration + Nautilus customizations"
-    echo "  kde          KDE Plasma configuration"
-    echo "  rice         Catppuccin cursor, Inter font, Blur my Shell, Night Light"
+    echo "  gnome        GNOME-only configuration + Nautilus customizations"
+    echo "  kde          KDE Plasma-only configuration"
+    echo "  rice         GNOME-only Catppuccin cursor, Inter font, Blur my Shell, Night Light"
     echo "  dotfiles     Dotfiles symlinks"
     echo "  relink       Re-point dotfile symlinks after the repo is moved/renamed (run as --only relink)"
     echo "  shell-default  Set zsh as default shell"
@@ -118,6 +118,29 @@ should_run() {
     return 0
 }
 
+section_supported_on_desktop() {
+    local section="$1"
+
+    case "$section" in
+        gnome|rice)
+            require_desktop gnome || {
+                log_warn "Skipping $section: not running GNOME (detected: $DESKTOP_ENV)"
+                summary_skip "$section (not on GNOME)"
+                return 1
+            }
+            ;;
+        kde)
+            require_desktop kde || {
+                log_warn "Skipping $section: not running KDE Plasma (detected: $DESKTOP_ENV)"
+                summary_skip "$section (not on KDE)"
+                return 1
+            }
+            ;;
+    esac
+
+    return 0
+}
+
 # Sections that require internet access (downloads, dnf, git clone, flatpak…).
 # Anything not listed runs offline (git config, desktop settings, dotfiles, etc.).
 NETWORK_SECTIONS=(
@@ -138,6 +161,9 @@ run_section() {
     local fn="$2"
     if ! should_run "$slug"; then
         log_warn "Skipping: $slug"
+        return
+    fi
+    if ! section_supported_on_desktop "$slug"; then
         return
     fi
     if section_needs_internet "$slug" && ! require_internet "$slug"; then
@@ -912,10 +938,14 @@ setup_flatpak() {
         return
     fi
 
-    case "$DISTRO_FAMILY" in
-        fedora) pkg_install flatpak gnome-software-plugin-flatpak ;;
-        debian) pkg_install flatpak gnome-software-plugin-flatpak ;;
-        arch)   pkg_install flatpak ;;
+    pkg_install flatpak
+
+    case "$DESKTOP_ENV:$DISTRO_FAMILY" in
+        gnome:fedora) pkg_install gnome-software-plugin-flatpak ;;
+        gnome:debian) pkg_install gnome-software-plugin-flatpak ;;
+        kde:fedora)   pkg_install plasma-discover-flatpak ;;
+        kde:debian)   pkg_install plasma-discover-backend-flatpak ;;
+        kde:arch)     pkg_install flatpak-kcm ;;
     esac
 
     if flatpak remotes 2>/dev/null | grep -q flathub; then
@@ -1885,12 +1915,6 @@ EOF
 configure_gnome() {
     log_section "Section 20: GNOME Configuration"
 
-    if ! require_desktop gnome; then
-        log_warn "Not running GNOME (detected: $DESKTOP_ENV) — skipping GNOME settings."
-        summary_skip "GNOME config (not on GNOME)"
-        return
-    fi
-
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session detected (running via SSH?). Skipping GNOME settings."
         summary_skip "GNOME config (no D-Bus session)"
@@ -2086,12 +2110,6 @@ kde_write() {
 configure_kde() {
     log_section "Section 20b: KDE Plasma Configuration"
 
-    if ! require_desktop kde; then
-        log_warn "Not running KDE Plasma (detected: $DESKTOP_ENV) — skipping KDE settings."
-        summary_skip "KDE config (not on KDE)"
-        return
-    fi
-
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session detected (running via SSH?). Skipping KDE settings."
         summary_skip "KDE config (no D-Bus session)"
@@ -2180,12 +2198,6 @@ configure_kde() {
 
 setup_rice() {
     log_section "Section 21: Ricing (Catppuccin cursor + fonts + extensions)"
-
-    if ! require_desktop gnome; then
-        log_warn "Not running GNOME (detected: $DESKTOP_ENV) — skipping ricing (theme apply is GNOME-specific)."
-        summary_skip "Rice (not on GNOME)"
-        return
-    fi
 
     if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
         log_warn "No D-Bus session — skipping rice setup"
@@ -2294,12 +2306,17 @@ setup_dotfiles() {
     if is_linux; then
         FILES+=(
             ".local/bin/fix-steam-shortcuts"
-            ".local/share/nautilus/scripts/Copy Path"
-            ".local/share/nautilus/scripts/Make Executable"
-            ".local/share/nautilus/scripts/Open in Editor"
             ".config/systemd/user/fix-steam-shortcuts.service"
             ".config/systemd/user/fix-steam-shortcuts.path"
         )
+
+        if require_desktop gnome; then
+            FILES+=(
+                ".local/share/nautilus/scripts/Copy Path"
+                ".local/share/nautilus/scripts/Make Executable"
+                ".local/share/nautilus/scripts/Open in Editor"
+            )
+        fi
     fi
 
     for file in "${FILES[@]}"; do
@@ -2427,8 +2444,9 @@ reboot_prompt() {
     log_warn "  • nvidia-drm.modeset=1 kernel argument"
     log_warn "  • Docker + libvirt group membership"
     log_warn "  • Default shell change to zsh"
-    log_warn "  • GNOME extensions activation"
-    log_warn "  • Qt dark theme (/etc/environment)"
+    require_desktop gnome && log_warn "  • GNOME extensions activation"
+    require_desktop gnome && log_warn "  • Qt dark theme (/etc/environment)"
+    require_desktop kde && log_warn "  • KDE Plasma settings reload/login"
     echo ""
     read -rp "Reboot now? [y/N]: " answer
     if [[ "${answer,,}" == "y" ]]; then
