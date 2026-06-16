@@ -192,7 +192,7 @@ install_gnome_ext() {
 
     local EXT_INFO
     EXT_INFO=$(safe_curl -fsSL \
-        "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=${GNOME_VER}" 2>/dev/null)
+        "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=${GNOME_VER}" 2>/dev/null || true)
 
     local DOWNLOAD_URL
     DOWNLOAD_URL=$(python3 -c \
@@ -252,6 +252,14 @@ configure_dnf() {
                 "max_parallel_downloads=10"
                 "fastestmirror=True"
                 "defaultyes=True"
+                # Drop dead/crawling mirrors fast instead of stalling the whole
+                # transaction. A mirror that can't sustain minrate for `timeout`
+                # seconds is abandoned and DNF moves to the next one. Default
+                # minrate (1 KB/s) / timeout (30s) lets a near-dead mirror tie up
+                # each package for half a minute before giving up.
+                "minrate=10000"
+                "timeout=15"
+                "retries=10"
             )
             for setting in "${SETTINGS[@]}"; do
                 local key="${setting%%=*}"
@@ -644,17 +652,24 @@ install_packages() {
     # (these come from RPM Fusion; no direct equivalent on Ubuntu/Arch — those
     # ship working VA-API stacks by default).
     if [[ "$DISTRO_FAMILY" == "fedora" ]]; then
-        if pkg_installed ffmpeg-free && ! pkg_installed ffmpeg; then
+        if ! pkg_installed ffmpeg-free || pkg_installed ffmpeg; then
+            log_warn "ffmpeg already correct"
+        elif dnf_swap_would_downgrade ffmpeg-free ffmpeg; then
+            log_warn "Skipping ffmpeg-free → ffmpeg: RPM Fusion's build lags Fedora updates and the swap would downgrade packages. Will retry once RPM Fusion catches up."
+        else
             log_info "Swapping ffmpeg-free → ffmpeg for full codec support..."
             dnf_run_optional swap -y ffmpeg-free ffmpeg --allowerasing
-        else
-            log_warn "ffmpeg already correct"
         fi
 
         for pkg in mesa-va-drivers mesa-vdpau-drivers; do
             local free_pkg="${pkg}-freeworld"
             if pkg_installed "$free_pkg"; then
                 log_warn "$free_pkg already installed"
+            elif dnf_swap_would_downgrade "${pkg}.x86_64" "${free_pkg}.x86_64"; then
+                # RPM Fusion freeworld mesa lags Fedora updates → the swap would
+                # downgrade the whole version-locked mesa stack. Skip until it
+                # catches up rather than churn a 13-package downgrade every run.
+                log_warn "Skipping ${pkg} → ${free_pkg}: RPM Fusion's freeworld build (older) would downgrade the mesa stack. Will retry once it catches up to Fedora updates."
             else
                 log_info "Swapping ${pkg}.x86_64 → ${free_pkg}.x86_64..."
                 (dnf_run_optional swap -y "${pkg}.x86_64" "${free_pkg}.x86_64" --allowerasing) || \
@@ -841,7 +856,7 @@ for a in d.get('assets', []):
     if a['name'].endswith(pat):
         print(a['browser_download_url'])
         break
-" "$ocd_pattern")
+" "$ocd_pattern" || true)
 
         if [[ -n "$OCD_URL" ]]; then
             local OCD_TMP="/tmp/opencode-desktop.${ocd_pattern##*.}"
@@ -1038,7 +1053,7 @@ install_zen() {
     fi
 
     local version appimage_url sha256
-    version=$(printf '%s' "$api_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')
+    version=$(printf '%s' "$api_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' || true)
     read -r appimage_url sha256 < <(python3 -c '
 import json
 import sys
@@ -1052,7 +1067,7 @@ for asset in data.get("assets", []):
             digest = digest.removeprefix("sha256:")
         print(asset.get("browser_download_url", ""), digest)
         break
-' "$appimage_name" <<< "$api_json")
+' "$appimage_name" <<< "$api_json") || true
 
     [[ -n "$version" ]]      || { log_warn "Could not parse Zen version"; summary_fail "Zen Browser"; return 1; }
     [[ -n "$appimage_url" ]] || { log_warn "Could not find Zen AppImage URL"; summary_fail "Zen Browser"; return 1; }
@@ -1500,6 +1515,14 @@ install_shell_extras() {
     fi
 
     local ZSH_CUSTOM="${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}"
+
+    if [[ ! -d "$HOME/.oh-my-zsh" ]]; then
+        log_warn "Oh My Zsh is not installed; skipping Powerlevel10k and plugin setup"
+        summary_skip "Oh My Zsh + Powerlevel10k + plugins (Oh My Zsh install failed)"
+        return
+    fi
+
+    mkdir -p "$ZSH_CUSTOM/themes" "$ZSH_CUSTOM/plugins"
 
     if [[ ! -d "$ZSH_CUSTOM/themes/powerlevel10k" ]]; then
         log_info "Installing Powerlevel10k..."
@@ -2507,6 +2530,7 @@ setup_dotfiles() {
         ".gitconfig-imedia24"
         ".config/ghostty/config"
         ".config/fontconfig/fonts.conf"
+        ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
         ".config/Code/User/settings.json"
         ".config/opencode/opencode.jsonc"
         ".pi/agent/settings.json"
@@ -2573,7 +2597,13 @@ set_default_shell() {
     log_section "Section 23: Default Shell"
 
     local ZSH_PATH
-    ZSH_PATH="$(command -v zsh)"
+    ZSH_PATH="$(command -v zsh || true)"
+
+    if [[ -z "$ZSH_PATH" ]]; then
+        log_warn "zsh is not installed — run the 'shell' / 'packages' sections first"
+        summary_skip "Default shell (zsh not installed)"
+        return
+    fi
 
     if [[ "$SHELL" == "$ZSH_PATH" ]]; then
         log_warn "zsh is already the default shell"

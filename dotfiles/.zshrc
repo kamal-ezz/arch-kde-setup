@@ -35,6 +35,11 @@ fi
 # Path to your Oh My Zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
 
+if [[ ! -r "$ZSH/oh-my-zsh.sh" ]]; then
+  print -u2 "Oh My Zsh is not installed. From the unix-setup repo, run: bash setup.sh --only shell"
+  return 0
+fi
+
 # Set name of the theme to load --- if set to "random", it will
 # load a random theme each time Oh My Zsh is loaded, in which case,
 # to know which specific one was loaded, run: echo $RANDOM_THEME
@@ -180,7 +185,9 @@ _path_prepend_existing "$BUN_INSTALL/bin"
 _path_prepend_existing "$HOME/.opencode/bin"
 
 # The next line enables shell command completion for gcloud.
-if [ -f '/home/kamal/.local/share/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kamal/.local/share/google-cloud-sdk/completion.zsh.inc'; fi
+if [[ -f "$HOME/.local/share/google-cloud-sdk/completion.zsh.inc" ]]; then
+  source "$HOME/.local/share/google-cloud-sdk/completion.zsh.inc"
+fi
 
 # >>> grok installer >>>
 _path_prepend_existing "$HOME/.grok/bin"

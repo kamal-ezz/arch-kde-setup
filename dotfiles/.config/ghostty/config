@@ -30,6 +30,6 @@ palette = 15=#f5f3ff
 
 background-opacity = 0.95
 
-gtk-titlebar = false
+gtk-titlebar = true
 gtk-single-instance = false
 window-show-tab-bar = auto

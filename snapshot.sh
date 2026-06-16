@@ -39,6 +39,7 @@ log_section "App configs"
 
 capture "$HOME/.config/ghostty/config"           ".config/ghostty/config"
 capture "$HOME/.config/fontconfig/fonts.conf"    ".config/fontconfig/fonts.conf"
+capture "$HOME/.config/fontconfig/conf.d/99-kamal-prefer-inter.conf" ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
 capture "$HOME/.config/Code/User/settings.json"  ".config/Code/User/settings.json"
 capture "$HOME/.config/Code/User/keybindings.json" ".config/Code/User/keybindings.json"
 capture "$HOME/.config/opencode/opencode.jsonc"  ".config/opencode/opencode.jsonc"

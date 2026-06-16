@@ -267,6 +267,18 @@ dnf_run_optional() {
     }
 }
 
+# True if `dnf swap <from> <to>` would downgrade one or more installed packages.
+# RPM Fusion's *-freeworld mesa/ffmpeg builds routinely lag Fedora's updates
+# repo; because the mesa stack is version-locked, swapping in a lagging freeworld
+# driver drags the whole stack backwards (a 13-package downgrade), which then
+# fights every `dnf upgrade` and repeats on every setup run. Dry-run the swap and
+# refuse it when it would move anything to an older version.
+dnf_swap_would_downgrade() {
+    local from="$1" to="$2" out
+    out="$(sudo dnf swap "$from" "$to" --allowerasing --assumeno 2>&1 || true)"
+    grep -qiE 'downgrad(e|ing|ed)' <<< "$out"
+}
+
 # curl wrapper with retries. Covers transient failures: short network blips,
 # GitHub/SourceForge/etc. having a bad minute, slow DNS, 5xx responses.
 # --retry-all-errors needs curl ≥ 7.71 (2020); all supported distros have it.
