@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
-# Post-install setup script (Fedora, Ubuntu/Debian, Arch, macOS)
+# Post-install setup script for Arch Linux + KDE Plasma.
 # Run as your regular user (not root), from a desktop session.
-#
-# Tested on: Fedora.
-# Best-effort, untested on: Ubuntu, Debian, Arch.
 #
 # Usage:
 #   bash setup.sh                        # run all compatible sections
 #   bash setup.sh --only kde dotfiles    # run only these sections
-#   bash setup.sh --skip nvidia snapper  # run all except these
+#   bash setup.sh --skip snapper         # run all except these
 #   bash setup.sh --list                 # list available sections
 set -euo pipefail
 
@@ -37,18 +34,16 @@ summary_fail() { SUMMARY+=("  ${RED}✗${NC}  $*"); }
 list_sections() {
     echo "Available sections:"
     echo "  git          Git configuration"
-    echo "  dnf          Package manager tuning (parallel downloads, etc.)"
-    echo "  repos        Enable third-party repositories (Chrome, Docker, VS Code, gh, Wine, ProtonVPN; RPM Fusion on Fedora)"
+    echo "  pacman       Package manager tuning (parallel downloads, multilib, etc.)"
+    echo "  repos        Refresh Arch keyring and bootstrap AUR helper"
     echo "  upgrade      System upgrade"
     echo "  packages     Package installation"
     echo "  ms-fonts     Microsoft fonts"
-    echo "  extra-tools  yt-dlp, Neovim, opencode, opencode Desktop"
-    echo "  ghostty      Build Ghostty from source (zvm + Zig)"
+    echo "  extra-tools  yt-dlp, Neovim, opencode"
+    echo "  ghostty      Install Ghostty"
     echo "  flatpak      Flatpak + Flathub + Spotify"
-    echo "  zen          Zen Browser AppImage"
     echo "  steam-components Steam Linux Runtime + Proton + Steamworks Common (run as --only steam-components; needs Steam GUI)"
     echo "  steam-shortcuts  Fix Steam game shortcuts (add StartupWMClass for dock icons)"
-    echo "  nvidia       NVIDIA drivers (auto-skips if no NVIDIA GPU)"
     echo "  asus         asusctl/supergfxctl (auto-skips if not ASUS hardware)"
     echo "  fonts        MesloLGS NF, Inter UI font, Catppuccin cursor"
     echo "  shell        Oh My Zsh + Powerlevel10k + plugins"
@@ -59,15 +54,13 @@ list_sections() {
     echo "  virt         Virtualization (KVM/QEMU)"
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
     echo "  vscode       VS Code extensions + Catppuccin Mocha theme"
-    echo "  gnome        GNOME-only configuration + Nautilus customizations"
     echo "  kde          KDE Plasma-only configuration"
-    echo "  rice         GNOME-only font/cursor apply, Blur my Shell, Night Light"
     echo "  dotfiles     Install dotfiles into \$HOME (real files, not symlinks)"
     echo "  shell-default  Set zsh as default shell"
     echo ""
     echo "Examples:"
     echo "  bash setup.sh --only kde dotfiles"
-    echo "  bash setup.sh --skip nvidia snapper virt"
+    echo "  bash setup.sh --skip snapper virt"
     echo "  ENABLE_STRICT_CRYPTO=1 ENABLE_DNS_OVER_TLS=1 bash setup.sh --only security"
 }
 
@@ -122,13 +115,6 @@ section_supported_on_desktop() {
     local section="$1"
 
     case "$section" in
-        gnome|rice)
-            require_desktop gnome || {
-                log_warn "Skipping $section: not running GNOME (detected: $DESKTOP_ENV)"
-                summary_skip "$section (not on GNOME)"
-                return 1
-            }
-            ;;
         kde)
             require_desktop kde || {
                 log_warn "Skipping $section: not running KDE Plasma (detected: $DESKTOP_ENV)"
@@ -141,11 +127,10 @@ section_supported_on_desktop() {
     return 0
 }
 
-# Sections that require internet access (downloads, dnf, git clone, flatpak…).
-# Anything not listed runs offline (git config, desktop settings, dotfiles, etc.).
+# Sections that require internet access.
 NETWORK_SECTIONS=(
-    repos upgrade packages ms-fonts extra-tools ghostty flatpak zen steam-components
-    nvidia asus fonts shell node ssh services vscode rice virt snapper
+    repos upgrade packages ms-fonts extra-tools ghostty flatpak steam-components
+    asus fonts shell node ssh services vscode virt snapper
 )
 
 section_needs_internet() {
@@ -174,305 +159,59 @@ run_section() {
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-install_gnome_ext() {
-    local uuid="$1"
-    local name="$2"
-
-    if gnome-extensions list 2>/dev/null | grep -q "^${uuid}$"; then
-        log_warn "Extension $name already installed"
-        return
-    fi
-
-    local GNOME_VER
-    GNOME_VER=$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
-    if [[ -z "$GNOME_VER" ]]; then
-        log_warn "Could not determine GNOME Shell version; skipping $name"
-        return
-    fi
-
-    local EXT_INFO
-    EXT_INFO=$(safe_curl -fsSL \
-        "https://extensions.gnome.org/extension-info/?uuid=${uuid}&shell_version=${GNOME_VER}" 2>/dev/null || true)
-
-    local DOWNLOAD_URL
-    DOWNLOAD_URL=$(python3 -c \
-        "import sys,json; d=json.loads(sys.stdin.read()); print(d.get('download_url',''))" \
-        <<< "$EXT_INFO" 2>/dev/null || true)
-
-    if [[ -z "$DOWNLOAD_URL" ]]; then
-        log_warn "Could not resolve download URL for $name (GNOME $GNOME_VER)"
-        return
-    fi
-
-    local EXT_ZIP="/tmp/${uuid}.zip"
-    safe_curl -fsSL "https://extensions.gnome.org${DOWNLOAD_URL}" -o "$EXT_ZIP"
-    gnome-extensions install --force "$EXT_ZIP"
-    rm -f "$EXT_ZIP"
-    log_info "Installed extension: $name"
-}
-
 # ─── Section 1: Git Config ────────────────────────────────────────────────────
 
 configure_git() {
     log_section "Section 1: Git Configuration"
 
-    if [[ -f "$HOME/.gitconfig" ]]; then
-        log_warn "~/.gitconfig already exists, skipping"
-        summary_skip "Git config (already exists)"
-        return
-    fi
+    local git_name="kamal-ezz"
+    local git_email="ezzarmou.kamal@gmail.com"
 
-    read -rp "Git name:  " GIT_NAME
-    read -rp "Git email: " GIT_EMAIL
-    git config --global user.name  "$GIT_NAME"
-    git config --global user.email "$GIT_EMAIL"
+    git config --global user.name  "$git_name"
+    git config --global user.email "$git_email"
     git config --global init.defaultBranch main
-    log_info "Git config written."
+    log_info "Git config ensured for $git_name <$git_email>."
     summary_ok "Git config"
 }
 
 # ─── Section 2: Package Manager Configuration ────────────────────────────────
 
-configure_dnf() {
+configure_pacman() {
     log_section "Section 2: Package Manager Configuration"
 
-    case "$PKG_MGR" in
-        brew)
-            bootstrap_homebrew
-            if brew analytics state 2>/dev/null | grep -q "disabled"; then
-                log_warn "Homebrew analytics already disabled"
-            else
-                brew analytics off
-                log_info "Homebrew analytics disabled"
-            fi
-            ;;
-        dnf)
-            local DNF_CONF="/etc/dnf/dnf.conf"
-            local SETTINGS=(
-                "max_parallel_downloads=10"
-                "fastestmirror=True"
-                "defaultyes=True"
-                # Drop dead/crawling mirrors fast instead of stalling the whole
-                # transaction. A mirror that can't sustain minrate for `timeout`
-                # seconds is abandoned and DNF moves to the next one. Default
-                # minrate (1 KB/s) / timeout (30s) lets a near-dead mirror tie up
-                # each package for half a minute before giving up.
-                "minrate=10000"
-                "timeout=15"
-                "retries=10"
-            )
-            for setting in "${SETTINGS[@]}"; do
-                local key="${setting%%=*}"
-                if grep -q "^${key}=" "$DNF_CONF" 2>/dev/null; then
-                    log_warn "$key already set in dnf.conf"
-                else
-                    echo "$setting" | sudo tee -a "$DNF_CONF" > /dev/null
-                    log_info "Set $setting"
-                fi
-            done
-            ;;
-        apt)
-            # apt: enable parallel downloads + assume-yes by default
-            local APT_CONF="/etc/apt/apt.conf.d/99setup"
-            if [[ ! -f "$APT_CONF" ]]; then
-                sudo tee "$APT_CONF" > /dev/null <<'EOF'
-Acquire::Queue-Mode "host";
-Acquire::http::Pipeline-Depth "10";
-APT::Get::Assume-Yes "true";
-EOF
-                log_info "apt tuned (parallel + default-yes)"
-            else
-                log_warn "apt already tuned"
-            fi
-            ;;
-        pacman)
-            # pacman: parallel downloads + colour
-            local PACMAN_CONF="/etc/pacman.conf"
-            if ! grep -q '^ParallelDownloads' "$PACMAN_CONF"; then
-                sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' "$PACMAN_CONF"
-                log_info "pacman ParallelDownloads enabled"
-            else
-                log_warn "pacman ParallelDownloads already set"
-            fi
-            if ! grep -qE '^Color' "$PACMAN_CONF"; then
-                sudo sed -i 's/^#Color/Color/' "$PACMAN_CONF"
-                log_info "pacman Color enabled"
-            fi
-            # Enable multilib for Steam/Wine on Arch
-            if ! grep -qE '^\[multilib\]' "$PACMAN_CONF"; then
-                sudo sed -i '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/{s/^#//}' "$PACMAN_CONF"
-                sudo pacman -Sy --noconfirm
-                log_info "pacman multilib enabled"
-            fi
-            ;;
-    esac
+    local PACMAN_CONF="/etc/pacman.conf"
+    if ! grep -q '^ParallelDownloads' "$PACMAN_CONF"; then
+        sudo sed -i 's/^#ParallelDownloads.*/ParallelDownloads = 10/' "$PACMAN_CONF"
+        log_info "pacman ParallelDownloads enabled"
+    else
+        log_warn "pacman ParallelDownloads already set"
+    fi
+    if ! grep -qE '^Color' "$PACMAN_CONF"; then
+        sudo sed -i 's/^#Color/Color/' "$PACMAN_CONF"
+        log_info "pacman Color enabled"
+    fi
+    if ! grep -qE '^\[multilib\]' "$PACMAN_CONF"; then
+        sudo sed -i '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/{s/^#//}' "$PACMAN_CONF"
+        sudo pacman -Sy --noconfirm
+        log_info "pacman multilib enabled"
+    fi
 
     summary_ok "Package manager configuration"
 }
 
 # ─── Section 3: Repositories ─────────────────────────────────────────────────
 
-enable_repos_fedora() {
-    dnf_install_bulk dnf-plugins-core
-
-    if ! pkg_installed rpmfusion-free-release; then
-        log_info "Enabling RPM Fusion Free..."
-        dnf_run_optional install -y \
-            "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm"
-    else
-        log_warn "RPM Fusion Free already enabled"
-    fi
-
-    if ! pkg_installed rpmfusion-nonfree-release; then
-        log_info "Enabling RPM Fusion Nonfree..."
-        dnf_run_optional install -y \
-            "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
-    else
-        log_warn "RPM Fusion Nonfree already enabled"
-    fi
-
-    if [[ ! -f /etc/yum.repos.d/google-chrome.repo ]]; then
-        log_info "Adding Google Chrome repository..."
-        sudo rpm --import https://dl.google.com/linux/linux_signing_key.pub
-        sudo tee /etc/yum.repos.d/google-chrome.repo > /dev/null <<'EOF'
-[google-chrome]
-name=Google Chrome
-baseurl=http://dl.google.com/linux/chrome/rpm/stable/x86_64
-enabled=1
-gpgcheck=1
-gpgkey=https://dl.google.com/linux/linux_signing_key.pub
-EOF
-    else
-        log_warn "Google Chrome repo already configured"
-    fi
-
-    if [[ ! -f /etc/yum.repos.d/docker-ce.repo ]]; then
-        log_info "Adding Docker CE repository..."
-        add_dnf_repo_from_url https://download.docker.com/linux/fedora/docker-ce.repo
-    else
-        log_warn "Docker CE repo already configured"
-    fi
-
-    if [[ ! -f /etc/yum.repos.d/vscode.repo ]]; then
-        log_info "Adding VS Code repository..."
-        sudo rpm --import https://packages.microsoft.com/keys/microsoft.asc
-        sudo tee /etc/yum.repos.d/vscode.repo > /dev/null <<'EOF'
-[code]
-name=Visual Studio Code
-baseurl=https://packages.microsoft.com/yumrepos/vscode
-enabled=1
-gpgcheck=1
-gpgkey=https://packages.microsoft.com/keys/microsoft.asc
-EOF
-    else
-        log_warn "VS Code repo already configured"
-    fi
-
-    if [[ ! -f /etc/yum.repos.d/gh-cli.repo ]]; then
-        log_info "Adding GitHub CLI repository..."
-        add_dnf_repo_from_url https://cli.github.com/packages/rpm/gh-cli.repo
-    else
-        log_warn "GitHub CLI repo already configured"
-    fi
-
-    if [[ ! -f /etc/yum.repos.d/winehq.repo ]]; then
-        log_info "Adding WineHQ repository..."
-        add_dnf_repo_from_url "https://dl.winehq.org/wine-builds/fedora/$(rpm -E %fedora)/winehq.repo"
-    else
-        log_warn "WineHQ repo already configured"
-    fi
-
-    if ! pkg_installed protonvpn-stable-release; then
-        log_info "Adding ProtonVPN repository..."
-        local PVN_RPM="/tmp/protonvpn-stable-release.rpm"
-        local PVN_DIR_URL="https://repo.protonvpn.com/fedora-$(rpm -E %fedora)-stable/protonvpn-stable-release/"
-        # Resolve the current release RPM dynamically — hardcoding a version
-        # ages out as soon as Proton publishes a new one.
-        local PVN_FILE
-        PVN_FILE=$(safe_curl -fsSL "$PVN_DIR_URL" 2>/dev/null \
-            | grep -oE 'protonvpn-stable-release-[0-9][^"<>]*\.noarch\.rpm' \
-            | sort -Vr | head -1 || true)
-        if [[ -n "$PVN_FILE" ]] && safe_curl -fLo "$PVN_RPM" "${PVN_DIR_URL}${PVN_FILE}" 2>/dev/null; then
-            dnf_run_optional install -y "$PVN_RPM"
-            sudo dnf check-update --refresh 2>/dev/null || true
-            rm -f "$PVN_RPM"
-        else
-            log_warn "ProtonVPN repo RPM not available for Fedora $(rpm -E %fedora) — skipping"
-        fi
-    else
-        log_warn "ProtonVPN repo already configured"
-    fi
-}
-
-enable_repos_debian() {
-    sudo apt-get update -qq
-    pkg_install ca-certificates curl gnupg apt-transport-https software-properties-common
-
-    # Enable universe + multiverse on Ubuntu (no-op on plain Debian)
-    if cmd_exists add-apt-repository && [[ "$DISTRO" == "ubuntu" ]]; then
-        sudo add-apt-repository -y universe || true
-        sudo add-apt-repository -y multiverse || true
-    fi
-
-    local codename
-    codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
-    local arch
-    arch=$(dpkg --print-architecture)
-
-    # Google Chrome
-    add_apt_repo google-chrome \
-        "https://dl.google.com/linux/linux_signing_key.pub" \
-        "deb [arch=$arch signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main"
-
-    # Docker CE — vendor instructs different paths for ubuntu vs debian
-    local docker_path="ubuntu"
-    [[ "$DISTRO" == "debian" ]] && docker_path="debian"
-    add_apt_repo docker \
-        "https://download.docker.com/linux/$docker_path/gpg" \
-        "deb [arch=$arch signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$docker_path $codename stable"
-
-    # VS Code
-    add_apt_repo vscode \
-        "https://packages.microsoft.com/keys/microsoft.asc" \
-        "deb [arch=$arch signed-by=/etc/apt/keyrings/vscode.gpg] https://packages.microsoft.com/repos/code stable main"
-
-    # GitHub CLI
-    add_apt_repo github-cli \
-        "https://cli.github.com/packages/githubcli-archive-keyring.gpg" \
-        "deb [arch=$arch signed-by=/etc/apt/keyrings/github-cli.gpg] https://cli.github.com/packages stable main"
-
-    # WineHQ
-    sudo dpkg --add-architecture i386 || true
-    add_apt_repo winehq \
-        "https://dl.winehq.org/wine-builds/winehq.key" \
-        "deb [arch=$arch signed-by=/etc/apt/keyrings/winehq.gpg] https://dl.winehq.org/wine-builds/$DISTRO/ $codename main"
-
-    log_info "Repos configured for $DISTRO"
-}
-
 enable_repos_arch() {
-    # Arch: most "vendor repos" are AUR. Bootstrap yay so subsequent installs
-    # can pull from AUR transparently. extra/multilib are enabled in section 2.
+    # Most third-party software is either in the official repos or AUR.
+    sudo pacman -Sy --needed --noconfirm archlinux-keyring || \
+        log_warn "Could not refresh archlinux-keyring; continuing"
     bootstrap_aur
-    log_info "AUR helper bootstrapped (Chrome/VS Code/Wine/ProtonVPN come from AUR)"
-}
-
-enable_repos_darwin() {
-    # homebrew/cask-fonts was folded into homebrew/cask in 2024 — no taps needed
-    # for font casks anymore. Left as a hook for any future taps.
-    log_info "No extra Homebrew taps required (cask-fonts merged into homebrew/cask)"
+    log_info "AUR helper bootstrapped"
 }
 
 enable_repos() {
     log_section "Section 3: Enable Repositories"
-
-    case "$DISTRO_FAMILY" in
-        fedora) enable_repos_fedora ;;
-        debian) enable_repos_debian ;;
-        arch)   enable_repos_arch ;;
-        darwin) enable_repos_darwin ;;
-    esac
-
+    enable_repos_arch
     summary_ok "Repositories"
 }
 
@@ -499,124 +238,35 @@ system_upgrade() {
 # ─── Section 5: Package Installation ─────────────────────────────────────────
 
 install_docker_engine() {
-    # macOS: use Docker Desktop (cask); no daemon management or conflict removal needed.
-    if is_macos; then
-        if brew list --cask docker &>/dev/null; then
-            log_warn "Docker Desktop already installed"
-        else
-            log_info "Installing Docker Desktop..."
-            brew install --cask docker
-            log_warn "Launch Docker Desktop from Applications to start the daemon"
-        fi
-        return
-    fi
-
-    # Remove conflicting unofficial/distro Docker packages before installing
-    # Docker Engine from the upstream repo. Package list differs per distro.
     local conflicts
     read -ra conflicts <<< "$(pkgs_docker_conflicts)"
     [[ ${#conflicts[@]} -gt 0 ]] && pkg_remove "${conflicts[@]}"
-
-    case "$DISTRO_FAMILY" in
-        fedora|debian)
-            # Upstream Docker repo configured in enable_repos
-            pkg_install $(pkgs_docker_engine)
-            ;;
-        arch)
-            # Arch ships docker in extra; docker-compose plugin is included
-            pkg_install docker docker-buildx docker-compose
-            ;;
-    esac
-}
-
-install_chrome() {
-    case "$DISTRO_FAMILY" in
-        fedora) pkg_install google-chrome-stable ;;
-        debian) pkg_install google-chrome-stable ;;
-        arch)   pkg_install google-chrome ;;   # AUR
-        darwin) pkg_install google-chrome ;;   # Homebrew cask
-    esac
-}
-
-install_protonvpn() {
-    case "$DISTRO_FAMILY" in
-        fedora) pkg_install_one proton-vpn-gtk-app proton-vpn-gnome-desktop ;;
-        debian) pkg_install_one proton-vpn-gtk-app proton-vpn-gnome-desktop ;;
-        arch)   pkg_install proton-vpn-gtk-app ;;   # AUR
-        darwin) pkg_install protonvpn ;;            # Homebrew cask
-    esac
+    pkg_install $(pkgs_docker_engine)
 }
 
 install_vscode() {
-    case "$DISTRO_FAMILY" in
-        fedora) pkg_install code ;;
-        debian) pkg_install code ;;
-        arch)   pkg_install visual-studio-code-bin ;;   # AUR
-        darwin) pkg_install visual-studio-code ;;       # Homebrew cask
-    esac
+    pkg_install visual-studio-code-bin
 }
 
 install_gh_cli() {
-    case "$DISTRO_FAMILY" in
-        fedora)
-            if ! pkg_installed gh; then
-                log_info "Installing gh from the official GitHub CLI repo..."
-                dnf_run_optional install -y --repo gh-cli gh || \
-                    log_warn "Could not install gh from gh-cli repo"
-            else
-                log_warn "gh already installed"
-            fi
-            ;;
-        debian) pkg_install gh ;;
-        arch)   pkg_install github-cli ;;
-        darwin) pkg_install gh ;;
-    esac
+    pkg_install github-cli
 }
 
 install_wine() {
-    case "$DISTRO_FAMILY" in
-        fedora)
-            if [[ -f /etc/yum.repos.d/winehq.repo ]] && ! pkg_installed winehq-stable; then
-                log_info "Installing winehq-stable from WineHQ repo..."
-                dnf_run_optional install -y winehq-stable || \
-                    log_warn "winehq-stable install failed; multilib may still be syncing"
-            fi
-            ;;
-        debian)
-            sudo apt-get install -y --install-recommends winehq-stable \
-                || log_warn "winehq-stable install failed (multilib/i386 arch may need setup)"
-            ;;
-        arch)
-            pkg_install wine wine-mono wine-gecko
-            ;;
-        darwin)
-            log_warn "WineHQ is not supported on macOS. Use CrossOver (https://www.codeweavers.com/crossover/) as an alternative."
-            ;;
-    esac
+    pkg_install wine wine-mono wine-gecko
 }
 
 install_packages() {
     log_section "Section 5: Package Installation"
-
-    # Multilib sync is Fedora-specific (mirror lag between x86_64/i686 in
-    # enabled repos can break Steam/Wine installs). Skip elsewhere.
-    if [[ "$DISTRO_FAMILY" == "fedora" ]]; then
-        log_info "Synchronizing multilib-sensitive packages before installing Steam/Wine..."
-        mapfile -t multilib_specs < <(dnf_multilib_synced_specs mesa-vulkan-drivers gnutls)
-        if [[ ${#multilib_specs[@]} -gt 0 ]]; then
-            dnf_run_optional distro-sync --refresh --allowerasing -y "${multilib_specs[@]}" || \
-                log_warn "Could not synchronize mesa-vulkan-drivers/gnutls; continuing"
-        else
-            log_warn "Skipping multilib sync: no arch-aligned upgrades available right now"
-        fi
-    fi
 
     install_docker_engine
 
     # Java — pick first available LTS
     pkg_install_one $(pkgs_java_candidates)
 
-    # Bulk install via per-distro mappings
+    pkg_install fuse2
+
+    # Bulk install
     pkg_install $(pkgs_system_tools) \
                 $(pkgs_dev) \
                 $(pkgs_codecs) \
@@ -627,68 +277,14 @@ install_packages() {
                 $(pkgs_fonts_arabic) \
                 $(pkgs_bluetooth)
 
-    # GNOME-only packages (gnome-tweaks, dash-to-dock, appindicator, Nautilus helpers)
-    if require_desktop gnome; then
-        pkg_install $(pkgs_gnome_only) $(pkgs_nautilus_customizations)
-    fi
-
-    # KDE-only packages (Dolphin/Konsole integration, KDE Connect, core apps)
     if require_desktop kde; then
         pkg_install $(pkgs_kde_only)
     fi
 
-    install_chrome
     install_vscode
-    install_protonvpn
     install_gh_cli
     install_wine
-
-    # macOS-only desktop apps: Claude and Codex.
-    if is_macos; then
-        pkg_install claude codex-app
-    fi
-
-    # Fedora-only: swap ffmpeg-free → full ffmpeg + AMD VA-API freeworld drivers
-    # (these come from RPM Fusion; no direct equivalent on Ubuntu/Arch — those
-    # ship working VA-API stacks by default).
-    if [[ "$DISTRO_FAMILY" == "fedora" ]]; then
-        if ! pkg_installed ffmpeg-free || pkg_installed ffmpeg; then
-            log_warn "ffmpeg already correct"
-        elif dnf_swap_would_downgrade ffmpeg-free ffmpeg; then
-            log_warn "Skipping ffmpeg-free → ffmpeg: RPM Fusion's build lags Fedora updates and the swap would downgrade packages. Will retry once RPM Fusion catches up."
-        else
-            log_info "Swapping ffmpeg-free → ffmpeg for full codec support..."
-            dnf_run_optional swap -y ffmpeg-free ffmpeg --allowerasing
-        fi
-
-        for pkg in mesa-va-drivers mesa-vdpau-drivers; do
-            local free_pkg="${pkg}-freeworld"
-            if pkg_installed "$free_pkg"; then
-                log_warn "$free_pkg already installed"
-            elif dnf_swap_would_downgrade "${pkg}.x86_64" "${free_pkg}.x86_64"; then
-                # RPM Fusion freeworld mesa lags Fedora updates → the swap would
-                # downgrade the whole version-locked mesa stack. Skip until it
-                # catches up rather than churn a 13-package downgrade every run.
-                log_warn "Skipping ${pkg} → ${free_pkg}: RPM Fusion's freeworld build (older) would downgrade the mesa stack. Will retry once it catches up to Fedora updates."
-            else
-                log_info "Swapping ${pkg}.x86_64 → ${free_pkg}.x86_64..."
-                (dnf_run_optional swap -y "${pkg}.x86_64" "${free_pkg}.x86_64" --allowerasing) || \
-                    log_warn "Could not swap $pkg → $free_pkg — skipping"
-            fi
-        done
-        (dnf_install_bulk libva-utils) || log_warn "Could not install libva-utils — skipping"
-    else
-        # Other distros: just ensure VA-API utils are installed
-        case "$DISTRO_FAMILY" in
-            debian) pkg_install vainfo intel-media-va-driver-non-free i965-va-driver ;;
-            arch)   pkg_install libva-utils intel-media-driver libva-mesa-driver ;;
-        esac
-    fi
-
-    # Remove preinstalled GNOME bloat (only relevant on GNOME)
-    if require_desktop gnome; then
-        pkg_remove $(pkgs_bloat)
-    fi
+    pkg_install libva-utils intel-media-driver libva-mesa-driver
 
     summary_ok "Packages"
 }
@@ -697,68 +293,27 @@ install_packages() {
 
 install_ms_fonts() {
     log_section "Section 6: Microsoft Fonts"
-
-    case "$DISTRO_FAMILY" in
-        darwin)
-            log_warn "Microsoft Core Fonts are not packaged for Homebrew. Install manually if needed."
-            summary_skip "Microsoft fonts (not available on macOS)"
-            return
-            ;;
-        fedora)
-            if pkg_installed msttcore-fonts-installer; then
-                log_warn "Microsoft fonts already installed, skipping"
-                summary_skip "Microsoft fonts (already installed)"
-                return
-            fi
-            local TMP_RPM="/tmp/msttcore-fonts-installer.rpm"
-            log_info "Downloading Microsoft fonts installer..."
-            safe_curl -fLo "$TMP_RPM" \
-                "https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm"
-            dnf_run_optional install -y "$TMP_RPM"
-            rm -f "$TMP_RPM"
-            ;;
-        debian)
-            # ttf-mscorefonts-installer (multiverse on Ubuntu, contrib on Debian)
-            # accepts the EULA via debconf; pre-seed it for non-interactive install.
-            if cmd_exists debconf-set-selections; then
-                echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
-                    | sudo debconf-set-selections
-            else
-                pkg_install debconf-utils && \
-                    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" \
-                        | sudo debconf-set-selections
-            fi
-            pkg_install ttf-mscorefonts-installer
-            ;;
-        arch)
-            pkg_install ttf-ms-fonts   # AUR
-            ;;
-    esac
+    pkg_install $(pkgs_ms_fonts)
 
     log_info "Microsoft fonts installed."
     summary_ok "Microsoft fonts"
 }
 
-# ─── Section 7: Extra Tools (yt-dlp, Neovim, opencode, opencode Desktop) ──────
+# ─── Section 7: Extra Tools (yt-dlp, Neovim, opencode) ────────────────────────
 
 install_extra_tools() {
-    log_section "Section 7: Extra Tools (yt-dlp, Neovim, opencode, opencode Desktop)"
+    log_section "Section 7: Extra Tools (yt-dlp, Neovim, opencode)"
 
     mkdir -p "$HOME/.local/bin"
 
-    # yt-dlp — brew on macOS (official recommendation), prebuilt binary on Linux
     if cmd_exists yt-dlp; then
         log_warn "yt-dlp already installed"
         summary_skip "yt-dlp (already installed)"
     else
         log_info "Installing yt-dlp..."
-        if is_macos; then
-            brew install yt-dlp
-        else
-            safe_curl -fLo "$HOME/.local/bin/yt-dlp" \
-                https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
-            chmod +x "$HOME/.local/bin/yt-dlp"
-        fi
+        safe_curl -fLo "$HOME/.local/bin/yt-dlp" \
+            https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+        chmod +x "$HOME/.local/bin/yt-dlp"
         summary_ok "yt-dlp"
     fi
 
@@ -768,27 +323,18 @@ install_extra_tools() {
         summary_skip "Neovim (already installed)"
     else
         log_info "Installing Neovim..."
-        if is_macos; then
-            brew install neovim
-        else
-            local NVIM_TMP="/tmp/nvim-linux-x86_64.tar.gz"
-            safe_curl -fLo "$NVIM_TMP" \
-                https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
-            sudo tar -C /opt -xzf "$NVIM_TMP"
-            sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
-            rm -f "$NVIM_TMP"
-        fi
+        local NVIM_TMP="/tmp/nvim-linux-x86_64.tar.gz"
+        safe_curl -fLo "$NVIM_TMP" \
+            https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+        sudo tar -C /opt -xzf "$NVIM_TMP"
+        sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
+        rm -f "$NVIM_TMP"
         summary_ok "Neovim"
     fi
 
-    # opencode — anomalyco tap on macOS (per opencode.ai/docs, fresher than the
-    # core Homebrew formula), official install script on Linux.
     if cmd_exists opencode; then
         log_warn "opencode already installed"
         summary_skip "opencode (already installed)"
-    elif is_macos; then
-        log_info "Installing opencode from anomalyco/tap..."
-        brew install anomalyco/tap/opencode && summary_ok "opencode" || summary_fail "opencode"
     else
         log_info "Installing opencode via the official install script..."
         local OC_SCRIPT="/tmp/opencode-install.sh"
@@ -827,59 +373,12 @@ install_extra_tools() {
         fi
     fi
 
-    # opencode Desktop — package from GitHub releases (anomalyco/opencode)
-    if is_macos; then
-        log_warn "opencode Desktop: download the macOS DMG manually from https://github.com/anomalyco/opencode/releases"
-        summary_skip "opencode Desktop (manual install on macOS)"
-    elif pkg_installed opencode || pkg_installed opencode-desktop; then
-        log_warn "opencode Desktop already installed"
-        summary_skip "opencode Desktop (already installed)"
-    else
-        log_info "Installing opencode Desktop..."
-        local ocd_pattern
-        case "$DISTRO_FAMILY" in
-            fedora) ocd_pattern="x86_64.rpm" ;;
-            debian) ocd_pattern="amd64.deb" ;;
-            arch)
-                # No prebuilt Arch package — fall back to AppImage in /opt
-                ocd_pattern="x86_64.AppImage"
-                ;;
-        esac
-
-        local OCD_URL
-        OCD_URL=$(safe_curl -fsSL "https://api.github.com/repos/anomalyco/opencode/releases/latest" \
-            | python3 -c "
-import sys, json
-pat = sys.argv[1]
-d = json.loads(sys.stdin.read())
-for a in d.get('assets', []):
-    if a['name'].endswith(pat):
-        print(a['browser_download_url'])
-        break
-" "$ocd_pattern" || true)
-
-        if [[ -n "$OCD_URL" ]]; then
-            local OCD_TMP="/tmp/opencode-desktop.${ocd_pattern##*.}"
-            safe_curl -fLo "$OCD_TMP" "$OCD_URL"
-            if [[ "$ocd_pattern" == *AppImage ]]; then
-                sudo install -m 0755 "$OCD_TMP" /opt/opencode-desktop.AppImage
-                sudo ln -sf /opt/opencode-desktop.AppImage /usr/local/bin/opencode-desktop
-                summary_ok "opencode Desktop (AppImage)"
-            else
-                install_local_pkg "$OCD_TMP" && summary_ok "opencode Desktop" || summary_fail "opencode Desktop"
-            fi
-            rm -f "$OCD_TMP"
-        else
-            log_warn "Could not resolve opencode Desktop URL for $ocd_pattern, skipping"
-            summary_fail "opencode Desktop"
-        fi
-    fi
 }
 
-# ─── Section 8: Ghostty (build from source) ──────────────────────────────────
+# ─── Section 8: Ghostty ───────────────────────────────────────────────────────
 
 install_ghostty() {
-    log_section "Section 8: Ghostty (build from source)"
+    log_section "Section 8: Ghostty"
 
     if cmd_exists ghostty; then
         log_warn "Ghostty already installed, skipping"
@@ -887,84 +386,13 @@ install_ghostty() {
         return
     fi
 
-    # macOS: install the official pre-built cask; no source build needed.
-    if is_macos; then
-        log_info "Installing Ghostty via Homebrew cask..."
-        brew install --cask ghostty
-        summary_ok "Ghostty (installed via Homebrew)"
-        return
-    fi
-
-    # Build dependencies
-    pkg_install $(pkgs_ghostty_build_deps)
-
-    # zvm (Zig Version Manager)
-    local ZVM_BIN="$HOME/.zvm/self/zvm"
-    if [[ -x "$ZVM_BIN" ]]; then
-        log_warn "zvm already installed"
+    log_info "Installing Ghostty from Arch repositories..."
+    pkg_install ghostty
+    if cmd_exists ghostty; then
+        summary_ok "Ghostty (installed from Arch repos)"
     else
-        log_info "Installing zvm..."
-        local ZVM_SCRIPT="/tmp/zvm-install.sh"
-        local zvm_installed=0
-        if safe_curl -fsSL https://www.zvm.app/install.sh -o "$ZVM_SCRIPT"; then
-            bash "$ZVM_SCRIPT" && zvm_installed=1
-            rm -f "$ZVM_SCRIPT"
-        fi
-        if [[ "$zvm_installed" -ne 1 ]]; then
-            # Fallback: GitHub release tarball. The install script does the
-            # same thing internally.
-            log_warn "zvm install script unavailable; falling back to GitHub release binary"
-            local zvm_asset
-            case "$(uname -m)" in
-                x86_64|amd64)  zvm_asset="zvm-linux-amd64.tar" ;;
-                aarch64|arm64) zvm_asset="zvm-linux-arm64.tar" ;;
-                *) log_warn "No zvm release binary for $(uname -m)"; zvm_asset="" ;;
-            esac
-            if [[ -n "$zvm_asset" ]]; then
-                local ZVM_TAR="/tmp/$zvm_asset"
-                if safe_curl -fLo "$ZVM_TAR" \
-                        "https://github.com/tristanisham/zvm/releases/latest/download/$zvm_asset"; then
-                    mkdir -p "$HOME/.zvm/self" "$HOME/.zvm/bin"
-                    tar -xf "$ZVM_TAR" -C "$HOME/.zvm/self"
-                    chmod +x "$HOME/.zvm/self/zvm"
-                    rm -f "$ZVM_TAR"
-                else
-                    log_warn "Could not download zvm release binary"
-                fi
-            fi
-        fi
-    fi
-
-    export PATH="$HOME/.zvm/bin:$HOME/.zvm/self:$PATH"
-
-    # Latest stable Ghostty tag
-    local GHOSTTY_TAG
-    GHOSTTY_TAG=$(safe_curl -fsSL https://api.github.com/repos/ghostty-org/ghostty/releases/latest \
-        | grep '"tag_name"' | grep -o '"[^"]*"' | tail -1 | tr -d '"' || true)
-    if [[ -z "$GHOSTTY_TAG" ]]; then
-        log_warn "Could not determine latest Ghostty release tag — skipping"
         summary_fail "Ghostty"
-        return 0
     fi
-    log_info "Cloning Ghostty $GHOSTTY_TAG..."
-
-    local GHOSTTY_SRC="/tmp/ghostty-src"
-    rm -rf "$GHOSTTY_SRC"
-    git clone --depth=1 --branch "$GHOSTTY_TAG" \
-        https://github.com/ghostty-org/ghostty.git "$GHOSTTY_SRC"
-
-    # Install the exact Zig version the release requires
-    local ZIG_VERSION
-    ZIG_VERSION=$(cat "$GHOSTTY_SRC/.zigversion")
-    log_info "Installing Zig $ZIG_VERSION via zvm..."
-    zvm install "$ZIG_VERSION"
-    zvm use "$ZIG_VERSION"
-
-    log_info "Building Ghostty (this will take a few minutes)..."
-    (cd "$GHOSTTY_SRC" && zig build -Doptimize=ReleaseFast --prefix "$HOME/.local")
-
-    rm -rf "$GHOSTTY_SRC"
-    summary_ok "Ghostty $GHOSTTY_TAG (built from source)"
 }
 
 # ─── Section 9: Flatpak + Flathub ────────────────────────────────────────────
@@ -972,21 +400,8 @@ install_ghostty() {
 setup_flatpak() {
     log_section "Section 9: Flatpak + Flathub"
 
-    if is_macos; then
-        log_warn "Flatpak is not available on macOS — skipping (use brew casks for GUI apps)"
-        summary_skip "Flatpak (not available on macOS)"
-        return
-    fi
-
     pkg_install flatpak
-
-    case "$DESKTOP_ENV:$DISTRO_FAMILY" in
-        gnome:fedora) pkg_install gnome-software-plugin-flatpak ;;
-        gnome:debian) pkg_install gnome-software-plugin-flatpak ;;
-        kde:fedora)   pkg_install plasma-discover-flatpak ;;
-        kde:debian)   pkg_install plasma-discover-backend-flatpak ;;
-        kde:arch)     pkg_install flatpak-kcm ;;
-    esac
+    require_desktop kde && pkg_install flatpak-kcm xdg-desktop-portal-kde
 
     if flatpak remotes 2>/dev/null | grep -q flathub; then
         log_warn "Flathub already configured"
@@ -1006,148 +421,6 @@ setup_flatpak() {
         summary_ok "Spotify"
     fi
 
-    # GNOME Extension Manager from Flathub — only useful on GNOME.
-    if require_desktop gnome; then
-        if flatpak list 2>/dev/null | grep -q "com.mattjakeman.ExtensionManager"; then
-            log_warn "Extension Manager already installed"
-        else
-            log_info "Installing GNOME Extension Manager from Flathub..."
-            flatpak install -y flathub com.mattjakeman.ExtensionManager
-            summary_ok "GNOME Extension Manager"
-        fi
-    else
-        summary_skip "GNOME Extension Manager (not on GNOME)"
-    fi
-}
-
-# ─── Section 10: Zen Browser AppImage ────────────────────────────────────────
-
-install_zen() {
-    log_section "Section 10: Zen Browser"
-
-    if ! is_linux; then
-        log_warn "Zen Browser AppImage is Linux-only; skipping on $DISTRO"
-        summary_skip "Zen Browser (unsupported OS)"
-        return 0
-    fi
-
-    local repo="zen-browser/desktop"
-    local arch appimage_name
-    arch="$(uname -m)"
-    case "$arch" in
-        x86_64|amd64) appimage_name="zen-x86_64.AppImage" ;;
-        aarch64|arm64) appimage_name="zen-aarch64.AppImage" ;;
-        *)
-            log_warn "Unsupported Zen AppImage architecture: $arch"
-            summary_skip "Zen Browser (unsupported arch)"
-            return 0
-            ;;
-    esac
-
-    log_info "Fetching latest Zen Browser release info"
-    local api_json
-    api_json=$(safe_curl -fsSL "https://api.github.com/repos/${repo}/releases/latest") \
-        || { log_warn "Failed to fetch Zen release info"; summary_fail "Zen Browser"; return 1; }
-    if [[ -z "$api_json" ]]; then
-        log_warn "Empty Zen release info"; summary_fail "Zen Browser"; return 1
-    fi
-
-    local version appimage_url sha256
-    version=$(printf '%s' "$api_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))' || true)
-    read -r appimage_url sha256 < <(python3 -c '
-import json
-import sys
-
-name = sys.argv[1]
-data = json.loads(sys.stdin.read())
-for asset in data.get("assets", []):
-    if asset.get("name") == name:
-        digest = asset.get("digest", "")
-        if digest.startswith("sha256:"):
-            digest = digest.removeprefix("sha256:")
-        print(asset.get("browser_download_url", ""), digest)
-        break
-' "$appimage_name" <<< "$api_json") || true
-
-    [[ -n "$version" ]]      || { log_warn "Could not parse Zen version"; summary_fail "Zen Browser"; return 1; }
-    [[ -n "$appimage_url" ]] || { log_warn "Could not find Zen AppImage URL"; summary_fail "Zen Browser"; return 1; }
-
-    local app_dir="$HOME/Applications"
-    local appimage_path="$app_dir/zen-browser.AppImage"
-    local version_file="$HOME/.local/share/zen-browser/version"
-    local installed_ver
-    installed_ver=$(cat "$version_file" 2>/dev/null || true)
-    if [[ "$installed_ver" == "$version" && -x "$appimage_path" ]]; then
-        log_info "Zen Browser $version already installed"
-        summary_ok "Zen Browser (already up to date)"
-        return 0
-    fi
-    [[ -n "$installed_ver" ]] && log_info "Upgrading Zen Browser: $installed_ver → $version"
-
-    mkdir -p "$app_dir" "$HOME/.local/bin" "$HOME/.local/share/applications" \
-        "$HOME/.local/share/zen-browser" "$HOME/.local/share/icons/hicolor/128x128/apps"
-
-    local tmp_appimage="/tmp/${appimage_name}"
-    log_info "Downloading $appimage_url"
-    safe_curl -fL# --output "$tmp_appimage" "$appimage_url"
-    if [[ -n "$sha256" ]]; then
-        log_info "Verifying checksum"
-        printf '%s  %s\n' "$sha256" "$tmp_appimage" | sha256sum --check --status \
-            || { log_warn "SHA-256 mismatch"; summary_fail "Zen Browser"; rm -f "$tmp_appimage"; return 1; }
-    fi
-
-    install -m 0755 "$tmp_appimage" "$appimage_path"
-    ln -sf "$appimage_path" "$HOME/.local/bin/zen-browser"
-    rm -f "$tmp_appimage"
-
-    local tmp_extract
-    tmp_extract="$(mktemp -d /tmp/zen-appimage.XXXXXX)"
-    if (cd "$tmp_extract" && "$appimage_path" --appimage-extract >/dev/null 2>&1); then
-        local icon
-        icon=$(find "$tmp_extract/squashfs-root" -type f \( -name 'zen.png' -o -name 'zen-browser.png' -o -path '*/zen*.png' \) \
-            | sort -Vr | head -1 || true)
-        if [[ -n "$icon" ]]; then
-            install -m 0644 "$icon" "$HOME/.local/share/icons/hicolor/128x128/apps/zen-browser.png"
-        fi
-    fi
-    rm -rf "$tmp_extract"
-
-    cat > "$HOME/.local/share/applications/zen-browser.desktop" <<EOF
-[Desktop Entry]
-Version=1.0
-Name=Zen Browser
-GenericName=Web Browser
-Comment=Experience tranquil browsing with Zen Browser
-Exec=${appimage_path} %u
-Icon=zen-browser
-Terminal=false
-Type=Application
-Categories=Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;x-scheme-handler/chrome;video/webm;application/x-xpinstall;
-StartupWMClass=zen
-StartupNotify=true
-EOF
-
-    printf '%s' "$version" > "$version_file"
-    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    gtk-update-icon-cache "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-
-    # Copy Zen mods and keyboard shortcuts to the active profile
-    local zen_profile
-    zen_profile=$(grep '^Path=' "$HOME/.config/zen/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2)
-    if [[ -n "$zen_profile" ]]; then
-        local profile_dir="$HOME/.config/zen/$zen_profile"
-        for f in zen-themes.json zen-keyboard-shortcuts.json; do
-            if [[ -f "$DOTFILES_DIR/.config/zen/$f" ]]; then
-                cp "$DOTFILES_DIR/.config/zen/$f" "$profile_dir/$f"
-                log_info "Installed Zen $f → $profile_dir"
-            fi
-        done
-    else
-        log_warn "Could not detect Zen profile path — skipping mods install"
-    fi
-
-    summary_ok "Zen Browser $version (AppImage)"
 }
 
 # ─── Section 11: Steam Runtime Components ────────────────────────────────────
@@ -1233,98 +506,6 @@ fix_steam_shortcuts() {
     summary_ok "Steam shortcuts (applied + path watcher enabled)"
 }
 
-# ─── Section 11: NVIDIA Drivers ───────────────────────────────────────────────
-
-# Each install_nvidia_<family> returns 0 if it installed (caller emits the
-# "reboot required" summary), or 1 if it was a no-op (caller stays quiet —
-# the function has already emitted its own skip/fail summary line).
-install_nvidia_fedora() {
-    if pkg_installed akmod-nvidia; then
-        log_warn "akmod-nvidia already installed, skipping"
-        summary_skip "NVIDIA drivers (already installed)"
-        return 1
-    fi
-    log_info "Installing NVIDIA drivers (RPM Fusion)..."
-    dnf_run_optional install -y \
-        akmod-nvidia \
-        xorg-x11-drv-nvidia-cuda \
-        xorg-x11-drv-nvidia-libs.i686 \
-        nvidia-vaapi-driver \
-        nvidia-settings
-
-    if ! sudo grubby --info=ALL 2>/dev/null | grep -q "nvidia-drm.modeset=1"; then
-        log_info "Enabling nvidia-drm.modeset=1 for Wayland..."
-        sudo grubby --update-kernel=ALL --args="nvidia-drm.modeset=1"
-    else
-        log_warn "nvidia-drm.modeset=1 already set"
-    fi
-    return 0
-}
-
-install_nvidia_debian() {
-    if pkg_installed nvidia-driver; then
-        log_warn "nvidia-driver already installed, skipping"
-        summary_skip "NVIDIA drivers (already installed)"
-        return 1
-    fi
-    log_info "Installing NVIDIA drivers via ubuntu-drivers / nvidia-driver..."
-    if cmd_exists ubuntu-drivers; then
-        # ubuntu-drivers picks the recommended driver dynamically; no hardcoded
-        # version number to age out as Ubuntu rotates default drivers.
-        sudo ubuntu-drivers install || sudo ubuntu-drivers autoinstall
-    else
-        # Debian: nvidia-driver from non-free; ensure non-free enabled
-        pkg_install nvidia-driver firmware-misc-nonfree libnvidia-encode1 nvidia-vaapi-driver || true
-    fi
-    return 0
-}
-
-install_nvidia_arch() {
-    if pkg_installed nvidia-dkms; then
-        log_warn "nvidia-dkms already installed, skipping"
-        summary_skip "NVIDIA drivers (already installed)"
-        return 1
-    fi
-    log_info "Installing NVIDIA drivers (nvidia-dkms)..."
-    pkg_install nvidia-dkms nvidia-utils lib32-nvidia-utils nvidia-settings libva-nvidia-driver
-
-    # Add nvidia-drm.modeset=1 to kernel cmdline (GRUB). Scoped to
-    # GRUB_CMDLINE_LINUX_DEFAULT only — GRUB_CMDLINE_LINUX is intentionally
-    # left alone.
-    if [[ -f /etc/default/grub ]] && ! grep -q "nvidia-drm.modeset=1" /etc/default/grub; then
-        sudo sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\([^"]*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 nvidia-drm.modeset=1"/' /etc/default/grub
-        sudo grub-mkconfig -o /boot/grub/grub.cfg 2>/dev/null || true
-    fi
-    return 0
-}
-
-install_nvidia() {
-    log_section "Section 10: NVIDIA Drivers"
-
-    if ! has_nvidia_hardware; then
-        log_warn "No NVIDIA GPU detected, skipping NVIDIA drivers"
-        summary_skip "NVIDIA drivers (no NVIDIA GPU detected)"
-        return
-    fi
-
-    local installed=0
-    case "$DISTRO_FAMILY" in
-        fedora) install_nvidia_fedora && installed=1 ;;
-        debian) install_nvidia_debian && installed=1 ;;
-        arch)   install_nvidia_arch && installed=1 ;;
-    esac
-
-    if [[ "$installed" -eq 1 ]]; then
-        echo ""
-        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_warn "  NVIDIA: kernel module will build on first boot."
-        log_warn "  Do NOT skip the reboot at the end of this script."
-        log_warn "  If Secure Boot is enabled, you must enroll the MOK key."
-        log_warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        summary_ok "NVIDIA drivers (reboot required)"
-    fi
-}
-
 # ─── Section 11: ASUS Linux Tools ────────────────────────────────────────────
 
 install_asus_tools() {
@@ -1339,37 +520,8 @@ install_asus_tools() {
     if pkg_installed asusctl && pkg_installed supergfxctl; then
         log_warn "ASUS tools already installed"
     else
-        case "$DISTRO_FAMILY" in
-            fedora)
-                log_info "ASUS hardware detected. Enabling ASUS Linux COPR..."
-                if ! sudo dnf copr list --enabled 2>/dev/null | grep -q "lukenukem/asus-linux"; then
-                    if ! dnf_run_with_repair copr enable -y lukenukem/asus-linux; then
-                        log_warn "Could not enable lukenukem/asus-linux COPR — skipping ASUS tools"
-                        summary_fail "ASUS tools"
-                        return 0
-                    fi
-                else
-                    log_warn "ASUS Linux COPR already enabled"
-                fi
-                log_info "Installing asusctl and supergfxctl..."
-                if ! dnf_run_with_repair install -y asusctl supergfxctl; then
-                    log_warn "Could not install ASUS tools — skipping"
-                    summary_fail "ASUS tools"
-                    return 0
-                fi
-                ;;
-            debian)
-                # No official PPA upstream; the asus-linux project provides
-                # source builds. Skip on Debian/Ubuntu — direct user to source.
-                log_warn "asusctl is not packaged for Debian/Ubuntu. See https://asus-linux.org/guides/ubuntu-guide/"
-                summary_skip "ASUS tools (build from source on Debian/Ubuntu)"
-                return 0
-                ;;
-            arch)
-                log_info "Installing asusctl and supergfxctl from AUR..."
-                pkg_install asusctl supergfxctl
-                ;;
-        esac
+        log_info "Installing asusctl and supergfxctl from AUR..."
+        pkg_install asusctl supergfxctl
     fi
 
     # Best-effort, non-blocking configuration. Each command is timeout-limited
@@ -1453,12 +605,6 @@ install_catppuccin_cursor() {
 
 install_fonts() {
     log_section "Section 12: Fonts / Shared Desktop Assets"
-
-    if is_macos; then
-        log_warn "Font management is handled manually on macOS — install fonts via Font Book."
-        summary_skip "Fonts (managed manually on macOS)"
-        return
-    fi
 
     local FONT_DIR="$HOME/.local/share/fonts"
     local FONT_CHECK="$FONT_DIR/MesloLGS NF Regular.ttf"
@@ -1557,15 +703,10 @@ install_shell_extras() {
 install_node() {
     log_section "Section 13: fnm + Node.js LTS"
 
-    # fnm — Homebrew on macOS (the upstream install script is deprecated there),
-    # the official curl installer on Linux.
     mkdir -p "$HOME/.local/bin"
 
     if cmd_exists fnm; then
         log_warn "fnm already installed"
-    elif is_macos; then
-        log_info "Installing fnm via Homebrew..."
-        brew install fnm
     else
         log_info "Installing fnm..."
         local FNM_SCRIPT="/tmp/fnm-install.sh"
@@ -1647,9 +788,6 @@ install_node() {
 
     if cmd_exists bun; then
         log_warn "bun already installed"
-    elif is_macos; then
-        log_info "Installing bun via Homebrew..."
-        brew install bun || log_warn "Could not install bun — continuing"
     else
         log_info "Installing bun..."
         local BUN_SCRIPT="/tmp/bun-install.sh"
@@ -1690,16 +828,10 @@ setup_ssh() {
 
     mkdir -p "$HOME/.ssh"
     chmod 700 "$HOME/.ssh"
-    # Prompt for a passphrase (empty input keeps the legacy behaviour). Storing
-    # an empty-passphrase key in macOS Keychain is a security no-op.
+    # Prompt for a passphrase (empty input keeps the legacy behaviour).
     ssh-keygen -t ed25519 -C "$EMAIL" -f "$SSH_KEY"
-    if is_macos; then
-        # macOS Keychain stores the passphrase so you don't need ssh-agent manually
-        ssh-add --apple-use-keychain "$SSH_KEY"
-    else
-        eval "$(ssh-agent -s)"
-        ssh-add "$SSH_KEY"
-    fi
+    eval "$(ssh-agent -s)"
+    ssh-add "$SSH_KEY"
 
     # GitHub's published host keys (https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints).
     # Verify whatever ssh-keyscan returns against these fingerprints before
@@ -1742,15 +874,6 @@ setup_ssh() {
 setup_services() {
     log_section "Section 15: Services (Docker, Bluetooth, Firewall)"
 
-    if is_macos; then
-        log_info "macOS: Docker Desktop manages its own daemon (launch from Applications)."
-        log_info "macOS: Bluetooth is always active — no daemon to manage."
-        log_info "macOS: Configure firewall via System Settings → Network → Firewall."
-        summary_ok "Services (macOS: managed by OS)"
-        return
-    fi
-
-    # Docker (containerd is bundled on Arch; separate service on Fedora/Debian)
     log_info "Enabling Docker service..."
     sudo systemctl enable --now docker || log_warn "Could not enable docker service"
     sudo systemctl enable --now containerd 2>/dev/null || true
@@ -1773,29 +896,19 @@ setup_services() {
     # Firewall
     log_info "Configuring firewall..."
     pkg_install $(pkgs_firewall)
-    case "$DISTRO_FAMILY" in
-        fedora|arch)
-            sudo systemctl enable --now firewalld
-            sudo firewall-cmd --set-default-zone=public
-            sudo firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
-            log_warn "Inbound HTTP/HTTPS are not opened by default; add them manually if this machine hosts web services."
+    sudo systemctl enable --now firewalld
+    sudo firewall-cmd --set-default-zone=public
+    sudo firewall-cmd --permanent --add-service=ssh 2>/dev/null || true
+    log_warn "Inbound HTTP/HTTPS are not opened by default; add them manually if this machine hosts web services."
 
-            if ! sudo firewall-cmd --permanent --list-rich-rules 2>/dev/null | grep -q "ssh.*limit"; then
-                sudo firewall-cmd --permanent \
-                    --add-rich-rule='rule service name="ssh" limit value="6/m" accept'
-                log_info "SSH rate limiting enabled."
-            else
-                log_warn "SSH rate limiting already configured"
-            fi
-            sudo firewall-cmd --reload
-            ;;
-        debian)
-            sudo ufw allow ssh
-            sudo ufw limit ssh   # rate-limit ssh
-            sudo ufw --force enable
-            log_info "ufw configured (ssh allowed + rate-limited)"
-            ;;
-    esac
+    if ! sudo firewall-cmd --permanent --list-rich-rules 2>/dev/null | grep -q "ssh.*limit"; then
+        sudo firewall-cmd --permanent \
+            --add-rich-rule='rule service name="ssh" limit value="6/m" accept'
+        log_info "SSH rate limiting enabled."
+    else
+        log_warn "SSH rate limiting already configured"
+    fi
+    sudo firewall-cmd --reload
 
     # Boot time: disable NetworkManager-wait-online (saves ~15-20s on desktops)
     if systemctl is-enabled NetworkManager-wait-online.service &>/dev/null; then
@@ -1843,7 +956,6 @@ setup_services() {
 setup_security() {
     log_section "Section 16: Security Checks / Optional Hardening"
 
-    # Crypto policy: Fedora-only (update-crypto-policies is from crypto-policies pkg).
     if cmd_exists update-crypto-policies; then
         local current_crypto_policy
         current_crypto_policy="$(update-crypto-policies --show 2>/dev/null || true)"
@@ -1860,14 +972,11 @@ setup_security() {
             log_warn "Strict crypto skipped. Set ENABLE_STRICT_CRYPTO=1 to disable SHA-1 system-wide."
         fi
     else
-        log_warn "update-crypto-policies not available on this distro — skipping crypto policy"
+        log_warn "update-crypto-policies not available — skipping crypto policy"
     fi
 
-    # DNS over TLS via systemd-resolved is opt-in and Linux-only.
     local DNS_CONF="/etc/systemd/resolved.conf.d/99-dns-over-tls.conf"
-    if ! is_linux; then
-        log_warn "DNS over TLS via systemd-resolved is Linux-only — skipping on macOS"
-    elif [[ "${ENABLE_DNS_OVER_TLS:-0}" == "1" ]]; then
+    if [[ "${ENABLE_DNS_OVER_TLS:-0}" == "1" ]]; then
         if [[ -f "$DNS_CONF" ]]; then
             log_warn "DNS over TLS already configured"
         else
@@ -1886,7 +995,6 @@ EOF
         log_warn "DNS over TLS skipped. Set ENABLE_DNS_OVER_TLS=1 to enable it."
     fi
 
-    # MAC: SELinux on Fedora, AppArmor on Debian/Ubuntu, neither default on Arch.
     if cmd_exists getenforce; then
         local selinux_state
         selinux_state="$(getenforce 2>/dev/null || echo unknown)"
@@ -1918,36 +1026,9 @@ EOF
 setup_virtualization() {
     log_section "Section 17: Virtualization"
 
-    if is_macos; then
-        log_warn "KVM/QEMU is Linux-only. On macOS, use UTM (https://mac.getutm.app/) or Parallels Desktop."
-        summary_skip "Virtualization (Linux-only; use UTM or Parallels on macOS)"
-        return
-    fi
+    log_info "Installing virtualization packages..."
+    pkg_install $(pkgs_virt)
 
-    # On Fedora, the "Virtualization" group is the canonical install path; on
-    # other distros use the package list directly.
-    if [[ "$DISTRO_FAMILY" == "fedora" ]]; then
-        if sudo dnf group list --installed 2>/dev/null | grep -q "Virtualization"; then
-            log_warn "Virtualization group already installed"
-            summary_skip "Virtualization (already installed)"
-            return
-        fi
-        log_info "Installing virtualization group..."
-        # dnf5 uses "group install", dnf4 uses "groupinstall". Track whether
-        # either succeeded so we don't pretend a failed install was OK.
-        if ! dnf_run_with_repair group install -y "virtualization" \
-           && ! dnf_run_with_repair groupinstall -y "Virtualization"; then
-            log_warn "Could not install Virtualization group — skipping libvirt enablement"
-            summary_fail "Virtualization (group install failed)"
-            return
-        fi
-    else
-        log_info "Installing virtualization packages..."
-        pkg_install $(pkgs_virt)
-    fi
-
-    # libvirtd is the legacy single unit; modern Fedora splits it into
-    # virtqemud + libvirtd.socket. Enable whichever is present.
     if systemctl list-unit-files virtqemud.service &>/dev/null; then
         sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket 2>/dev/null \
             || log_warn "Could not enable virtqemud sockets"
@@ -1971,12 +1052,6 @@ setup_virtualization() {
 
 setup_snapper() {
     log_section "Section 18: Snapper (Btrfs Snapshots)"
-
-    if is_macos; then
-        log_warn "Btrfs/Snapper is Linux-only. macOS uses APFS with Time Machine for snapshots."
-        summary_skip "Snapper (Linux-only)"
-        return
-    fi
 
     if ! findmnt -n -o FSTYPE / 2>/dev/null | grep -q btrfs; then
         log_warn "Root filesystem is not Btrfs — skipping Snapper setup."
@@ -2063,12 +1138,7 @@ setup_vscode() {
         code --install-extension "$ext" --force
     done
 
-    local VSCODE_SETTINGS
-    if is_macos; then
-        VSCODE_SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
-    else
-        VSCODE_SETTINGS="$HOME/.config/Code/User/settings.json"
-    fi
+    local VSCODE_SETTINGS="$HOME/.config/Code/User/settings.json"
     if [[ -f "$VSCODE_SETTINGS" ]]; then
         log_warn "VS Code settings.json already exists, skipping"
         summary_skip "VS Code settings (already exists)"
@@ -2121,184 +1191,6 @@ EOF
     fi
 }
 
-# ─── Section 20: GNOME Configuration ─────────────────────────────────────────
-
-configure_gnome() {
-    log_section "Section 20: GNOME Configuration"
-
-    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-        log_warn "No D-Bus session detected (running via SSH?). Skipping GNOME settings."
-        summary_skip "GNOME config (no D-Bus session)"
-        return
-    fi
-
-    # Interface. Do not force GTK_THEME/gtk-theme: that breaks GTK4/libadwaita apps
-    # like GNOME Settings. Use the supported dark preference instead.
-    gsettings set org.gnome.desktop.interface color-scheme  'prefer-dark'
-    gsettings reset org.gnome.desktop.interface gtk-theme 2>/dev/null || true
-    gsettings set org.gnome.desktop.interface icon-theme    'Papirus-Dark'
-
-    # Keyboard layouts
-    gsettings set org.gnome.desktop.input-sources sources   "[('xkb', 'us'), ('xkb', 'ara')]"
-
-    # Touchpad
-    gsettings set org.gnome.desktop.peripherals.touchpad click-method   'areas'
-    gsettings set org.gnome.desktop.peripherals.touchpad tap-to-click   true
-    gsettings set org.gnome.desktop.peripherals.touchpad natural-scroll true
-
-    # Dock
-    gsettings set org.gnome.shell favorite-apps \
-        "['org.gnome.Nautilus.desktop', 'google-chrome.desktop', 'com.mitchellh.ghostty.desktop']"
-
-    # Default apps
-    xdg-settings set default-web-browser google-chrome.desktop 2>/dev/null || \
-        log_warn "Could not set default browser"
-
-    for mime in video/mp4 video/x-matroska video/x-msvideo video/webm video/quicktime; do
-        xdg-mime default vlc.desktop "$mime"
-    done
-
-    # Qt platform theme for non-GTK apps. Also remove any old GTK_THEME override:
-    # it is a blunt GTK env var and makes GTK4/libadwaita apps look broken.
-    local ENV_FILE="/etc/environment"
-    if grep -q '^GTK_THEME=' "$ENV_FILE" 2>/dev/null; then
-        sudo sed -i '/^GTK_THEME=/d' "$ENV_FILE"
-        log_info "Removed GTK_THEME override from /etc/environment."
-    fi
-    # If a prior run exported GTK_THEME into the already-running user manager,
-    # logout may not clear it while other sessions are still active. Override it
-    # to empty for this boot; a full user-manager restart/reboot removes it.
-    if systemctl --user show-environment 2>/dev/null | grep -q '^GTK_THEME='; then
-        systemctl --user set-environment GTK_THEME= 2>/dev/null || true
-        dbus-update-activation-environment --systemd GTK_THEME= 2>/dev/null || true
-        log_warn "Cleared stale GTK_THEME for this session; reboot to remove it entirely."
-    fi
-    if grep -q '^QT_QPA_PLATFORMTHEME=' "$ENV_FILE" 2>/dev/null; then
-        sudo sed -i 's/^QT_QPA_PLATFORMTHEME=.*/QT_QPA_PLATFORMTHEME=qt6ct/' "$ENV_FILE"
-        log_info "Qt platform theme environment variable already present."
-    else
-        printf "\nQT_QPA_PLATFORMTHEME=qt6ct\n" | \
-            sudo tee -a "$ENV_FILE" > /dev/null
-        log_info "Qt platform theme environment variable set."
-    fi
-
-    # Pre-configure qt5ct and qt6ct so Qt apps use dark theme without manual setup
-    for qt_ct in qt5ct qt6ct; do
-        local QT_CONF="$HOME/.config/$qt_ct/$qt_ct.conf"
-        if [[ -f "$QT_CONF" ]]; then
-            log_warn "$qt_ct already configured"
-        else
-            mkdir -p "$HOME/.config/$qt_ct"
-            cat > "$QT_CONF" <<'EOF'
-[Appearance]
-color_scheme_path=
-custom_palette=false
-icon_theme=Papirus-Dark
-standard_dialogs=default
-style=Adwaita-Dark
-
-[Fonts]
-fixed=@Variant(\0\0\0@\0\0\0\x12Adwaita Mono\0\0\0\0\0\0\0\0\0\xfe\0\0\0\x11\0\0\0\0\0P\x10\x81)
-general=@Variant(\0\0\0@\0\0\0\x12Adwaita Sans\0\0\0\0\0\0\0\0\0\xfe\0\0\0\x11\0\0\0\0\0P\x10\x81)
-
-[Interface]
-activate_item_on_single_click=1
-buttonbox_layout=0
-cursor_flash_time=1000
-dialog_buttons_have_icons=1
-double_click_interval=400
-gui_effects=@Invalid()
-keyboard_scheme=2
-menus_have_icons=true
-show_shortcuts_in_context_menus=true
-stylesheets=@Invalid()
-toolbutton_style=4
-underline_shortcut=1
-wheel_scroll_lines=3
-
-[PaletteEditor]
-geometry=@ByteArray()
-
-[SettingsWindow]
-geometry=@ByteArray()
-EOF
-            log_info "$qt_ct configured with Adwaita-Dark theme."
-        fi
-    done
-
-    # System
-    # Hostname: don't override a user-customized one. Replace only the default
-    # placeholders distros ship with (localhost, hostname-set-by-installer).
-    local current_host
-    current_host="$(hostnamectl --static 2>/dev/null || hostname)"
-    case "$current_host" in
-        localhost|localhost.localdomain|fedora|ubuntu|debian|archlinux|""|"$DISTRO")
-            sudo hostnamectl set-hostname "$DISTRO"
-            log_info "Hostname set to $DISTRO"
-            ;;
-        *)
-            log_warn "Hostname already customized ($current_host), leaving unchanged"
-            ;;
-    esac
-    sudo timedatectl set-timezone Africa/Casablanca
-
-    powerprofilesctl set power-saver 2>/dev/null || \
-        log_warn "Could not set power profile"
-
-    # Extensions
-    gnome-extensions enable dash-to-dock@micxgx.gmail.com 2>/dev/null || \
-        log_warn "Dash to Dock will activate after logout/login"
-    gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com 2>/dev/null || \
-        log_warn "AppIndicator will activate after logout/login"
-
-    # Dash-to-dock: appearance and multi-window behaviour
-    if gsettings list-schemas | grep -qx 'org.gnome.shell.extensions.dash-to-dock'; then
-        gsettings set org.gnome.shell.extensions.dash-to-dock transparency-mode 'FIXED'
-        gsettings set org.gnome.shell.extensions.dash-to-dock custom-background-color true
-        gsettings set org.gnome.shell.extensions.dash-to-dock background-color '#000000'
-        gsettings set org.gnome.shell.extensions.dash-to-dock background-opacity 1.0
-        gsettings set org.gnome.shell.extensions.dash-to-dock click-action 'focus-or-previews'
-        gsettings set org.gnome.shell.extensions.dash-to-dock scroll-action 'cycle-windows'
-        gsettings set org.gnome.shell.extensions.dash-to-dock show-windows-preview true
-    else
-        log_warn "Dash-to-dock schema not available; skipping dock appearance settings"
-    fi
-
-    log_warn "GNOME extensions require logout/login to activate."
-
-    # Remove GNOME Software from autostart (saves 100-900 MB RAM)
-    local GNOME_SW_AUTOSTART="/etc/xdg/autostart/org.gnome.Software.desktop"
-    if [[ -f "$GNOME_SW_AUTOSTART" ]]; then
-        sudo rm -f "$GNOME_SW_AUTOSTART"
-        log_info "Removed GNOME Software from autostart"
-    else
-        log_warn "GNOME Software autostart already removed"
-    fi
-
-    # Privacy: disable automatic problem reporting (crash data to Red Hat)
-    gsettings set org.gnome.desktop.privacy report-technical-problems false
-
-    # Nautilus: show folders before files
-    gsettings set org.gtk.Settings.FileChooser sort-directories-first true
-    gsettings set org.gnome.nautilus.preferences sort-directories-first true 2>/dev/null || true
-    gsettings set org.gnome.nautilus.preferences default-folder-viewer 'list-view' 2>/dev/null || true
-    gsettings set org.gnome.nautilus.list-view default-zoom-level 'small' 2>/dev/null || true
-
-    if gsettings list-schemas | grep -qx 'com.github.stunkymonkey.nautilus-open-any-terminal'; then
-        gsettings set com.github.stunkymonkey.nautilus-open-any-terminal terminal 'ghostty'
-        log_info "Nautilus Open Any Terminal configured to use Ghostty"
-    else
-        log_warn "Nautilus Open Any Terminal schema not available; install packages first to enable Open in Ghostty"
-    fi
-
-    if command -v nautilus >/dev/null 2>&1; then
-        nautilus -q 2>/dev/null || true
-        log_info "Nautilus preferences applied; it will reload on next launch"
-    fi
-
-    summary_ok "GNOME configuration"
-}
-
 # ─── Section 20b: KDE Plasma Configuration ───────────────────────────────────
 
 kde_write() {
@@ -2319,6 +1211,27 @@ kde_write() {
         }
     else
         log_warn "kwriteconfig not found; cannot write $file [$group] $key"
+        return 1
+    fi
+}
+
+kde_delete() {
+    local file="$1"
+    local group="$2"
+    local key="$3"
+
+    if command -v kwriteconfig6 >/dev/null 2>&1; then
+        kwriteconfig6 --file "$file" --group "$group" --key "$key" --delete '' || {
+            log_warn "Could not delete $file [$group] $key"
+            return 1
+        }
+    elif command -v kwriteconfig5 >/dev/null 2>&1; then
+        kwriteconfig5 --file "$file" --group "$group" --key "$key" --delete '' || {
+            log_warn "Could not delete $file [$group] $key"
+            return 1
+        }
+    else
+        log_warn "kwriteconfig not found; cannot delete $file [$group] $key"
         return 1
     fi
 }
@@ -2398,22 +1311,13 @@ configure_kde() {
         log_warn "Catppuccin cursor not found in ~/.local/share/icons — skipping cursor theme"
     fi
 
-    # Fonts
-    local ui_family="Noto Sans"
-    if fc-match Inter 2>/dev/null | grep -qi "^inter"; then
-        ui_family="Inter"
-    else
-        log_warn "Inter font not found; using $ui_family for KDE UI fonts"
-    fi
-    local ui_font="${ui_family},12,-1,5,50,0,0,0,0,0"
-    local ui_font_bold="${ui_family},12,-1,5,75,0,0,0,0,0"
-    local mono_font="MesloLGS NF,12,-1,5,50,0,0,0,0,0"
-    kde_write kdeglobals General font "$ui_font"
-    kde_write kdeglobals General menuFont "$ui_font"
-    kde_write kdeglobals General toolBarFont "$ui_font"
-    kde_write kdeglobals General smallestReadableFont "${ui_family},10,-1,5,50,0,0,0,0,0"
-    kde_write kdeglobals General fixed "$mono_font"
-    kde_write kdeglobals WM activeFont "$ui_font_bold"
+    # Fonts: remove user overrides so Plasma falls back to its default font set.
+    kde_delete kdeglobals General font
+    kde_delete kdeglobals General menuFont
+    kde_delete kdeglobals General toolBarFont
+    kde_delete kdeglobals General smallestReadableFont
+    kde_delete kdeglobals General fixed
+    kde_delete kdeglobals WM activeFont
 
     # Keyboard layouts
     kde_write kxkbrc Layout Use true
@@ -2437,8 +1341,10 @@ configure_kde() {
     kde_write kdeglobals "KFileDialog Settings" "Sort directories first" true
 
     # Default apps
-    xdg-settings set default-web-browser google-chrome.desktop 2>/dev/null || \
-        log_warn "Could not set default browser"
+    if [[ -f /usr/share/applications/firefox.desktop ]] || [[ -f "$HOME/.local/share/applications/firefox.desktop" ]]; then
+        xdg-settings set default-web-browser firefox.desktop 2>/dev/null || \
+            log_warn "Could not set default browser"
+    fi
     for mime in video/mp4 video/x-matroska video/x-msvideo video/webm video/quicktime; do
         xdg-mime default vlc.desktop "$mime"
     done
@@ -2447,7 +1353,7 @@ configure_kde() {
     local current_host
     current_host="$(hostnamectl --static 2>/dev/null || hostname)"
     case "$current_host" in
-        localhost|localhost.localdomain|fedora|ubuntu|debian|archlinux|""|"$DISTRO")
+        localhost|localhost.localdomain|archlinux|""|"$DISTRO")
             sudo hostnamectl set-hostname "$DISTRO"
             log_info "Hostname set to $DISTRO"
             ;;
@@ -2468,55 +1374,6 @@ configure_kde() {
     summary_ok "KDE Plasma configuration"
 }
 
-# ─── Section 21: Ricing ───────────────────────────────────────────────────────
-
-setup_rice() {
-    log_section "Section 21: Ricing (Catppuccin cursor + fonts + extensions)"
-
-    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-        log_warn "No D-Bus session — skipping rice setup"
-        summary_skip "Rice (no D-Bus session)"
-        return
-    fi
-
-    install_inter_font
-
-    # GTK theme: use GNOME default (Adwaita). Reset in case a prior run set Catppuccin.
-    gsettings reset org.gnome.desktop.interface gtk-theme 2>/dev/null || true
-
-    install_catppuccin_cursor
-
-    # Apply cursor theme
-    local CURSOR_THEME
-    CURSOR_THEME=$(ls "$HOME/.local/share/icons/" 2>/dev/null | grep -i "catppuccin.*mocha.*cursor" | head -1 || true)
-    [[ -n "$CURSOR_THEME" ]] && \
-        gsettings set org.gnome.desktop.interface cursor-theme "$CURSOR_THEME"
-
-    gsettings set org.gnome.desktop.interface font-name          'Inter 12'
-    gsettings set org.gnome.desktop.interface document-font-name 'Inter 12'
-    gsettings set org.gnome.desktop.interface monospace-font-name 'MesloLGS NF 12'
-    gsettings set org.gnome.desktop.wm.preferences titlebar-font 'Inter Bold 12'
-
-    # GNOME extensions
-    install_gnome_ext "blur-my-shell@aunetx"           "Blur my Shell"
-    install_gnome_ext "rounded-window-corners@fxgn"    "Rounded Window Corners Reborn"
-
-    gnome-extensions enable user-theme@gnome-shell-extensions.gcampax.github.com 2>/dev/null || true
-    gnome-extensions enable blur-my-shell@aunetx 2>/dev/null || \
-        log_warn "Blur my Shell will activate after logout/login"
-    gnome-extensions enable rounded-window-corners@fxgn 2>/dev/null || \
-        log_warn "Rounded Window Corners will activate after logout/login"
-
-    # Night Light (8pm → 7am, warm 4000K)
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-enabled           true
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-automatic false
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-from      20.0
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-schedule-to        7.0
-    gsettings set org.gnome.settings-daemon.plugins.color night-light-temperature        4000
-
-    summary_ok "Ricing"
-}
-
 # ─── Section 22: Dotfiles ────────────────────────────────────────────────────
 
 setup_dotfiles() {
@@ -2531,41 +1388,35 @@ setup_dotfiles() {
         ".config/ghostty/config"
         ".config/fontconfig/fonts.conf"
         ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
+        ".config/mozilla/firefox/user.js"
         ".config/Code/User/settings.json"
         ".config/opencode/opencode.jsonc"
         ".pi/agent/settings.json"
         ".pi/agent/keybindings.json"
     )
 
-    # Linux-only: systemd user units and Steam shortcut fixer
-    if is_linux; then
-        FILES+=(
-            ".local/bin/fix-steam-shortcuts"
-            ".config/systemd/user/fix-steam-shortcuts.service"
-            ".config/systemd/user/fix-steam-shortcuts.path"
-        )
-
-        if require_desktop gnome; then
-            FILES+=(
-                ".local/share/nautilus/scripts/Copy Path"
-                ".local/share/nautilus/scripts/Make Executable"
-                ".local/share/nautilus/scripts/Open in Editor"
-            )
-        fi
-    fi
+    FILES+=(
+        ".local/bin/fix-steam-shortcuts"
+        ".config/systemd/user/fix-steam-shortcuts.service"
+        ".config/systemd/user/fix-steam-shortcuts.path"
+    )
 
     for file in "${FILES[@]}"; do
         local source="$DOTFILES_DIR/$file"
         local target="$HOME/$file"
 
-        # macOS path remapping: a few apps don't honour ~/.config by default.
-        if is_macos; then
-            case "$file" in
-                .config/ghostty/config)
-                    target="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
-                    ;;
-            esac
-        fi
+        case "$file" in
+            .config/mozilla/firefox/user.js)
+                local firefox_profile
+                firefox_profile=$(grep '^Path=' "$HOME/.config/mozilla/firefox/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2 || true)
+                if [[ -n "$firefox_profile" ]]; then
+                    target="$HOME/.config/mozilla/firefox/$firefox_profile/user.js"
+                else
+                    log_warn "Firefox profile not found for $file — skipping"
+                    continue
+                fi
+                ;;
+        esac
 
         if [[ ! -f "$source" ]]; then
             log_warn "Not found in dotfiles: $file — skipping"
@@ -2635,18 +1486,9 @@ print_summary() {
 
 reboot_prompt() {
     echo ""
-    if is_macos; then
-        log_info "Setup complete. Log out and back in for shell changes (default shell) to take effect."
-        return
-    fi
-
     log_warn "The following require a reboot to take effect:"
-    log_warn "  • NVIDIA akmod kernel module build"
-    log_warn "  • nvidia-drm.modeset=1 kernel argument"
     log_warn "  • Docker + libvirt group membership"
     log_warn "  • Default shell change to zsh"
-    require_desktop gnome && log_warn "  • GNOME extensions activation"
-    require_desktop gnome && log_warn "  • Qt dark theme (/etc/environment)"
     require_desktop kde && log_warn "  • KDE Plasma settings reload/login"
     echo ""
     read -rp "Reboot now? [y/N]: " answer
@@ -2672,7 +1514,7 @@ main() {
     preflight_checks
 
     run_section git           configure_git
-    run_section dnf           configure_dnf
+    run_section pacman        configure_pacman
     run_section repos         enable_repos
     run_section upgrade       system_upgrade
     run_section packages      install_packages
@@ -2680,10 +1522,8 @@ main() {
     run_section extra-tools   install_extra_tools
     run_section ghostty       install_ghostty
     run_section flatpak       setup_flatpak
-    run_section zen           install_zen
     run_section steam-components install_steam_components
     run_section steam-shortcuts fix_steam_shortcuts
-    run_section nvidia        install_nvidia
     run_section asus          install_asus_tools
     run_section fonts         install_fonts
     run_section shell         install_shell_extras
@@ -2694,9 +1534,7 @@ main() {
     run_section virt          setup_virtualization
     run_section snapper       setup_snapper
     run_section vscode        setup_vscode
-    run_section gnome         configure_gnome
     run_section kde           configure_kde
-    run_section rice          setup_rice
     run_section dotfiles      setup_dotfiles
     run_section shell-default set_default_shell
 

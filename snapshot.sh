@@ -40,6 +40,12 @@ log_section "App configs"
 capture "$HOME/.config/ghostty/config"           ".config/ghostty/config"
 capture "$HOME/.config/fontconfig/fonts.conf"    ".config/fontconfig/fonts.conf"
 capture "$HOME/.config/fontconfig/conf.d/99-kamal-prefer-inter.conf" ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
+FIREFOX_PROFILE_PATH=$(grep '^Path=' "$HOME/.config/mozilla/firefox/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2 || true)
+if [[ -n "$FIREFOX_PROFILE_PATH" ]]; then
+    capture "$HOME/.config/mozilla/firefox/$FIREFOX_PROFILE_PATH/user.js" ".config/mozilla/firefox/user.js"
+else
+    log_warn "No Firefox profile found — skipping Firefox user.js"
+fi
 capture "$HOME/.config/Code/User/settings.json"  ".config/Code/User/settings.json"
 capture "$HOME/.config/Code/User/keybindings.json" ".config/Code/User/keybindings.json"
 capture "$HOME/.config/opencode/opencode.jsonc"  ".config/opencode/opencode.jsonc"
@@ -60,21 +66,6 @@ capture "$HOME/.local/bin/fix-steam-shortcuts"                          ".local/
 capture "$HOME/.config/systemd/user/fix-steam-shortcuts.service"        ".config/systemd/user/fix-steam-shortcuts.service"
 capture "$HOME/.config/systemd/user/fix-steam-shortcuts.path"           ".config/systemd/user/fix-steam-shortcuts.path"
 
-# ─── Zen browser (lives behind a randomized profile dir) ──────────────────────
-
-log_section "Zen browser"
-
-ZEN_PROFILE_PATH=$(grep '^Path=' "$HOME/.config/zen/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2 || true)
-
-if [[ -z "$ZEN_PROFILE_PATH" ]]; then
-    log_warn "No Zen profile found — skipping"
-else
-    ZEN_PROFILE="$HOME/.config/zen/$ZEN_PROFILE_PATH"
-    for f in zen-themes.json zen-keyboard-shortcuts.json; do
-        capture "$ZEN_PROFILE/$f" ".config/zen/$f"
-    done
-fi
-
 # ─── GNOME ────────────────────────────────────────────────────────────────────
 
 log_section "GNOME"
@@ -86,6 +77,11 @@ if command -v gsettings &>/dev/null; then
 else
     log_warn "gsettings not available — skipping"
 fi
+
+# ─── KDE ──────────────────────────────────────────────────────────────────────
+
+log_section "KDE"
+log_info "KDE Plasma settings are managed by sync-kde.sh — edit that file to change them"
 
 KAMAL_TWEAKS_SRC="$HOME/.local/share/themes/kamal-tweaks"
 if [[ -d "$KAMAL_TWEAKS_SRC" ]]; then

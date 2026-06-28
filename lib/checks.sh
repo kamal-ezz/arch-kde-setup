@@ -10,31 +10,21 @@ preflight_checks() {
     log_info "Running as user: $USER"
 
     detect_distro
-    log_info "$DISTRO ${VERSION_ID:-} detected (family: $DISTRO_FAMILY, pkg-mgr: $PKG_MGR)"
-    if [[ "$DISTRO" == "macos" ]]; then
-        log_info "macOS detected — Linux-only sections (NVIDIA, ASUS, GRUB, systemd, Snapper) will be skipped"
-        # Bootstrap Homebrew early: every subsequent section on macOS depends on
-        # it, and the user may run a single section via --only without Section 2.
-        bootstrap_homebrew
-    elif [[ "$DISTRO" != "fedora" ]]; then
-        log_warn "Non-Fedora paths are best-effort and untested. Report issues if you hit them."
-    fi
+    log_info "Detected Arch Linux (${VERSION_ID:-unknown}), package manager: $PKG_MGR"
 
     detect_desktop
     log_info "Desktop environment: $DESKTOP_ENV"
-    if is_linux; then
-        case "$DESKTOP_ENV" in
-            gnome|kde)
-                log_info "Desktop-specific sections will be selected for $DESKTOP_ENV"
-                ;;
-            none)
-                log_warn "No desktop session detected — desktop-specific sections will be skipped."
-                ;;
-            *)
-                log_warn "Unsupported desktop ($DESKTOP_ENV) — GNOME/KDE-specific sections will be skipped."
-                ;;
-        esac
-    fi
+    case "$DESKTOP_ENV" in
+        kde)
+            log_info "KDE Plasma session detected"
+            ;;
+        none)
+            log_warn "No desktop session detected; KDE-specific sections will be skipped."
+            ;;
+        *)
+            log_warn "This repo targets KDE Plasma. Detected: $DESKTOP_ENV"
+            ;;
+    esac
 
     if ! sudo -v 2>/dev/null; then
         log_error "sudo access is required but not available."
@@ -58,11 +48,7 @@ preflight_checks() {
     export HAS_INTERNET
 
     local free_gb
-    if is_macos; then
-        free_gb=$(df -g / | awk 'NR==2 {print $4}')
-    else
-        free_gb=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
-    fi
+    free_gb=$(df -BG / | awk 'NR==2 {gsub("G",""); print $4}')
     if [[ "$free_gb" -lt 20 ]]; then
         log_error "Insufficient disk space: ${free_gb}GB free, 20GB required."
         exit 1
