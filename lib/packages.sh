@@ -7,7 +7,7 @@ pkgs_dev() { echo "podman python python-pip go gcc make cmake clang"; }
 
 pkgs_java_candidates() { echo "jdk21-openjdk jdk17-openjdk jdk-openjdk"; }
 
-pkgs_codecs() { echo "vlc ffmpeg gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav"; }
+pkgs_codecs() { echo "vlc vlc-plugin-ffmpeg ffmpeg gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav"; }
 
 pkgs_gaming() { echo "gamemode mangohud lutris goverlay"; }
 
