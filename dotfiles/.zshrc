@@ -113,11 +113,13 @@ _zsh_plugins=(
   extract
   colored-man-pages
   command-not-found
-  fzf
   zsh-autosuggestions
   zsh-completions
   zsh-syntax-highlighting
 )
+if command -v fzf >/dev/null 2>&1; then
+  _zsh_plugins+=(fzf)
+fi
 if [[ "$(uname -s)" == "Linux" ]]; then
   _zsh_plugins+=(dnf systemd)
 elif [[ "$(uname -s)" == "Darwin" ]]; then
