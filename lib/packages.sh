@@ -25,6 +25,8 @@ pkgs_fonts_arabic() { echo "noto-fonts ttf-amiri"; }
 
 pkgs_bluetooth() { echo "bluez bluez-utils"; }
 
+pkgs_power() { echo "power-profiles-daemon"; }
+
 pkgs_bloat() { echo "gnome-tour gnome-maps gnome-weather gnome-contacts gnome-clocks simple-scan"; }
 
 pkgs_ghostty_build_deps() { echo "gtk4 gtk4-layer-shell libadwaita gettext"; }

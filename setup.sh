@@ -50,6 +50,7 @@ list_sections() {
     echo "  node         fnm + Node.js LTS + npm globals"
     echo "  ssh          SSH key setup"
     echo "  services     Docker + Bluetooth + Firewall"
+    echo "  power        power-profiles-daemon (skips on ASUS w/ asusctl)"
     echo "  security     Light security checks; strict hardening is opt-in via env vars"
     echo "  virt         Virtualization (KVM/QEMU)"
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
@@ -130,7 +131,7 @@ section_supported_on_desktop() {
 # Sections that require internet access.
 NETWORK_SECTIONS=(
     repos upgrade packages ms-fonts extra-tools ghostty flatpak steam-components
-    asus fonts shell node ssh services vscode virt snapper
+    asus fonts shell node ssh services power vscode virt snapper
 )
 
 section_needs_internet() {
@@ -940,6 +941,57 @@ setup_services() {
     summary_ok "Services"
 }
 
+# ─── Section 15b: Power Profiles ─────────────────────────────────────────────
+#
+# Installs power-profiles-daemon so KDE's battery applet exposes the
+# Power Save / Balanced / Performance switch and `powerprofilesctl` works.
+# Override the default profile with POWER_PROFILE=balanced (or performance).
+
+setup_power_profiles() {
+    log_section "Section 15b: Power Profiles"
+
+    # On ASUS laptops asusd owns the platform profile; power-profiles-daemon
+    # fights it for the same sysfs knob. Let the asus section handle profiles.
+    if has_asus_hardware && pkg_installed asusctl; then
+        log_warn "ASUS hardware with asusctl detected; asusd manages power profiles."
+        summary_skip "Power profiles (managed by asusctl)"
+        return
+    fi
+
+    # power-profiles-daemon conflicts with other power managers over the same
+    # platform-profile/CPU knobs. Don't fight an already-installed one.
+    local conflict
+    for conflict in tlp tuned; do
+        if pkg_installed "$conflict"; then
+            log_warn "$conflict is installed; it conflicts with power-profiles-daemon over the same power knobs."
+            log_warn "  Remove it first ('sudo pacman -Rns $conflict') then re-run: bash setup.sh --only power"
+            summary_skip "Power profiles (conflicts with $conflict)"
+            return
+        fi
+    done
+
+    pkg_install $(pkgs_power)
+
+    if sudo systemctl enable --now power-profiles-daemon 2>/dev/null; then
+        log_info "power-profiles-daemon enabled"
+    else
+        log_warn "Could not enable power-profiles-daemon service"
+    fi
+
+    if cmd_exists powerprofilesctl; then
+        local profile="${POWER_PROFILE:-power-saver}"
+        if powerprofilesctl set "$profile" 2>/dev/null; then
+            log_info "Power profile set to $profile"
+        else
+            log_warn "Could not set power profile to '$profile' (unsupported on this hardware?)"
+        fi
+    else
+        log_warn "powerprofilesctl not found after install; skipping default profile"
+    fi
+
+    summary_ok "Power profiles"
+}
+
 # ─── Section 16: Security Checks / Optional Hardening ───────────────────────
 #
 # Defaults are intentionally conservative to avoid breaking VPNs, corporate
@@ -1362,12 +1414,7 @@ configure_kde() {
             ;;
     esac
     sudo timedatectl set-timezone Africa/Casablanca
-    if command -v powerprofilesctl >/dev/null 2>&1; then
-        powerprofilesctl set power-saver 2>/dev/null || \
-            log_warn "Could not set power profile"
-    else
-        log_warn "powerprofilesctl not found; skipping power profile"
-    fi
+    # Power profile is handled by the dedicated 'power' section.
 
     kde_apply_runtime_settings BreezeDark "$cursor_theme"
 
@@ -1530,6 +1577,7 @@ main() {
     run_section node          install_node
     run_section ssh           setup_ssh
     run_section services      setup_services
+    run_section power         setup_power_profiles
     run_section security      setup_security
     run_section virt          setup_virtualization
     run_section snapper       setup_snapper
