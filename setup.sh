@@ -1433,6 +1433,7 @@ setup_dotfiles() {
         ".gitconfig-work"
         ".gitconfig-imedia24"
         ".config/ghostty/config"
+        ".config/fastfetch/config.jsonc"
         ".config/fontconfig/fonts.conf"
         ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
         ".config/mozilla/firefox/user.js"

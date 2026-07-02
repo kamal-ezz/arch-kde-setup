@@ -38,6 +38,7 @@ capture "$HOME/.gitconfig-imedia24" ".gitconfig-imedia24"
 log_section "App configs"
 
 capture "$HOME/.config/ghostty/config"           ".config/ghostty/config"
+capture "$HOME/.config/fastfetch/config.jsonc"   ".config/fastfetch/config.jsonc"
 capture "$HOME/.config/fontconfig/fonts.conf"    ".config/fontconfig/fonts.conf"
 capture "$HOME/.config/fontconfig/conf.d/99-kamal-prefer-inter.conf" ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
 FIREFOX_PROFILE_PATH=$(grep '^Path=' "$HOME/.config/mozilla/firefox/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2 || true)
