@@ -1,0 +1,6 @@
+# PipeWire audio stack
+pipewire
+pipewire-pulse
+wireplumber
+pavucontrol
+playerctl

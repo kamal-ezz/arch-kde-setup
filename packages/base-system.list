@@ -1,0 +1,15 @@
+# Base system: kernel, boot, network, essentials
+base
+base-devel
+linux
+linux-firmware
+grub
+efibootmgr
+networkmanager
+sudo
+openssh
+man-db
+man-pages
+nano
+vim
+bash-completion

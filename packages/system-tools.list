@@ -5,9 +5,6 @@ curl
 wget
 unzip
 tar
-bat
-fzf
 htop
-cabextract
 fastfetch
 fuse2

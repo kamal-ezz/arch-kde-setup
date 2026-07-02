@@ -1,0 +1,10 @@
+# Desktop session: display manager, Plasma meta, portals
+sddm
+plasma-meta
+polkit-kde-agent
+xdg-desktop-portal
+qt5-wayland
+qt6-wayland
+network-manager-applet
+tumbler
+file-roller

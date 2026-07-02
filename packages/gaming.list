@@ -1,5 +1,4 @@
 # Gaming stack
-gamemode
-mangohud
-lutris
-goverlay
+wine
+wine-gecko
+wine-mono
