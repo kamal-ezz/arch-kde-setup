@@ -1,0 +1,7 @@
+#!absent — these should NOT be installed
+gnome-tour
+gnome-maps
+gnome-weather
+gnome-contacts
+gnome-clocks
+simple-scan

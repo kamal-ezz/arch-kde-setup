@@ -1,5 +1,5 @@
 {
-  "workbench.colorTheme": "Catppuccin Mocha",
+  "workbench.colorTheme": "poimandres",
   "workbench.iconTheme": "catppuccin-mocha",
 
   "editor.fontFamily": "'MesloLGS NF', 'Droid Sans Mono', monospace",
@@ -38,4 +38,6 @@
     "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
   "git.autofetch": true,
+  "gitlens.ai.model": "vscode",
+  "gitlens.ai.vscode.model": "copilotcli:",
 }

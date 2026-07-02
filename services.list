@@ -1,0 +1,10 @@
+# Systemd units expected to be enabled on this machine.
+# Prefix user units with 'user:'. './cfg apply services' enables missing ones;
+# it never disables anything.
+docker.service
+containerd.service
+bluetooth.service
+firewalld.service
+fstrim.timer
+virtqemud.socket
+user:fix-steam-shortcuts.path

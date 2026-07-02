@@ -1,0 +1,5 @@
+#!optional — only needed to build Ghostty from source
+gtk4
+gtk4-layer-shell
+libadwaita
+gettext

@@ -1,0 +1,274 @@
+#!/usr/bin/env bash
+# Declarative state for this machine, nix-style but non-destructive.
+#
+# Desired state lives in the repo:
+#   packages/*.list   package groups (directives: #!absent #!candidates #!optional)
+#   dotfiles/         every file in the tree is symlinked into $HOME
+#   services.list     systemd units expected enabled ('user:' prefix for user units)
+#
+# Usage:
+#   ./cfg diff  [packages|dotfiles|services]   # show drift (exit 1 if any)
+#   ./cfg apply [packages|dotfiles|services]   # reconcile, additive only
+#   ./cfg unmanaged                            # explicit packages not declared anywhere
+#   ./cfg list                                 # enumerate declared state
+#
+# apply never removes packages, files, or services. Removal candidates are
+# only ever printed as hints.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DOTFILES_DIR="$SCRIPT_DIR/dotfiles"
+SERVICES_FILE="$SCRIPT_DIR/services.list"
+
+source "$SCRIPT_DIR/lib/colors.sh"
+source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/distro.sh"
+source "$SCRIPT_DIR/lib/packages.sh"
+source "$SCRIPT_DIR/lib/dotfiles.sh"
+
+DRIFT=0
+
+# ─── Packages ─────────────────────────────────────────────────────────────────
+
+declare -A INSTALLED
+load_installed() {
+    local p
+    while IFS= read -r p; do INSTALLED[$p]=1; done < <(pacman -Qq)
+}
+
+group_missing() {
+    local pkg missing=()
+    for pkg in $(pkgs_from_list "$1"); do
+        [[ -z "${INSTALLED[$pkg]:-}" ]] && missing+=("$pkg")
+    done
+    echo "${missing[*]:-}"
+}
+
+group_present() {
+    local pkg present=()
+    for pkg in $(pkgs_from_list "$1"); do
+        [[ -n "${INSTALLED[$pkg]:-}" ]] && present+=("$pkg")
+    done
+    echo "${present[*]:-}"
+}
+
+diff_packages() {
+    log_section "Packages"
+    load_installed
+    local group directive missing present
+    for group in $(pkgs_groups); do
+        directive=$(pkgs_list_directive "$group")
+        case "$directive" in
+            normal)
+                missing=$(group_missing "$group")
+                if [[ -n "$missing" ]]; then
+                    DRIFT=1
+                    echo -e "  ${YELLOW}missing${NC}  [$group] $missing"
+                fi
+                ;;
+            absent)
+                present=$(group_present "$group")
+                if [[ -n "$present" ]]; then
+                    DRIFT=1
+                    echo -e "  ${RED}present${NC}  [$group] $present  (declared absent — remove manually: sudo pacman -Rns $present)"
+                fi
+                ;;
+            candidates)
+                present=$(group_present "$group")
+                if [[ -z "$present" ]]; then
+                    DRIFT=1
+                    echo -e "  ${YELLOW}missing${NC}  [$group] none of: $(pkgs_from_list "$group")"
+                fi
+                ;;
+            optional)
+                missing=$(group_missing "$group")
+                [[ -n "$missing" ]] && echo -e "  ${BLUE}info${NC}     [$group] not installed (optional): $missing"
+                ;;
+        esac
+    done
+    local n
+    n=$(unmanaged_packages | wc -l)
+    if [[ "$n" -gt 0 ]]; then
+        echo -e "  ${BLUE}info${NC}     $n explicitly installed packages are not declared — './cfg unmanaged' to list"
+    fi
+}
+
+apply_packages() {
+    log_section "Packages"
+    load_installed
+    local group directive missing present
+    for group in $(pkgs_groups); do
+        directive=$(pkgs_list_directive "$group")
+        case "$directive" in
+            normal)
+                missing=$(group_missing "$group")
+                # shellcheck disable=SC2086
+                [[ -n "$missing" ]] && pkg_install $missing
+                ;;
+            candidates)
+                present=$(group_present "$group")
+                # shellcheck disable=SC2086
+                [[ -z "$present" ]] && pkg_install_one $(pkgs_from_list "$group")
+                ;;
+            absent)
+                present=$(group_present "$group")
+                [[ -n "$present" ]] && log_warn "[$group] present but declared absent (not removing): $present"
+                ;;
+        esac
+    done
+    log_info "Packages reconciled (additive)."
+}
+
+# Explicitly installed packages that no group declares. Informational: the
+# nix-like signal that the system has state the repo doesn't know about.
+unmanaged_packages() {
+    local group declared=""
+    for group in $(pkgs_groups); do
+        [[ "$(pkgs_list_directive "$group")" == "absent" ]] && continue
+        declared+=" $(pkgs_from_list "$group")"
+    done
+    comm -23 <(pacman -Qeq | sort) <(echo "$declared" | tr ' ' '\n' | grep . | sort -u)
+}
+
+# ─── Dotfiles ─────────────────────────────────────────────────────────────────
+
+diff_dotfiles() {
+    log_section "Dotfiles"
+    local file status
+    while IFS= read -r file; do
+        status=$(dotfiles_status "$file")
+        case "$status" in
+            linked) ;;
+            missing|unlinked-same|wrong-link)
+                DRIFT=1
+                echo -e "  ${YELLOW}${status}${NC}  $file"
+                ;;
+            drifted)
+                DRIFT=1
+                echo -e "  ${RED}drifted${NC}  $file  (host file differs; apply backs it up, then links)"
+                ;;
+            no-target)
+                echo -e "  ${BLUE}info${NC}     $file has no install target on this host"
+                ;;
+        esac
+    done < <(dotfiles_manifest)
+}
+
+apply_dotfiles() {
+    log_section "Dotfiles"
+    local file
+    while IFS= read -r file; do
+        link_tracked_file "$file"
+    done < <(dotfiles_manifest)
+    log_info "Dotfiles reconciled."
+}
+
+# ─── Services ─────────────────────────────────────────────────────────────────
+
+services_manifest() {
+    grep -vE '^[[:space:]]*(#|$)' "$SERVICES_FILE"
+}
+
+service_enabled() {
+    local unit="$1" state
+    if [[ "$unit" == user:* ]]; then
+        state=$(systemctl --user is-enabled "${unit#user:}" 2>/dev/null || true)
+    else
+        state=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+    fi
+    [[ "$state" == "enabled" || "$state" == "static" || "$state" == "alias" ]]
+}
+
+diff_services() {
+    log_section "Services"
+    local unit
+    while IFS= read -r unit; do
+        if ! service_enabled "$unit"; then
+            DRIFT=1
+            echo -e "  ${YELLOW}disabled${NC} $unit"
+        fi
+    done < <(services_manifest)
+}
+
+apply_services() {
+    log_section "Services"
+    local unit
+    while IFS= read -r unit; do
+        if service_enabled "$unit"; then
+            continue
+        fi
+        if [[ "$unit" == user:* ]]; then
+            systemctl --user enable --now "${unit#user:}" \
+                && log_info "Enabled ${unit#user:} (user)" \
+                || log_warn "Could not enable $unit"
+        else
+            sudo systemctl enable --now "$unit" \
+                && log_info "Enabled $unit" \
+                || log_warn "Could not enable $unit"
+        fi
+    done < <(services_manifest)
+    log_info "Services reconciled."
+}
+
+# ─── Verbs ────────────────────────────────────────────────────────────────────
+
+usage() {
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+in_scope() {
+    [[ ${#SCOPES[@]} -eq 0 ]] && return 0
+    local s
+    for s in "${SCOPES[@]}"; do [[ "$s" == "$1" ]] && return 0; done
+    return 1
+}
+
+main() {
+    local verb="${1:-}"
+    shift || true
+    SCOPES=("$@")
+
+    case "$verb" in
+        diff)
+            in_scope packages && diff_packages
+            in_scope dotfiles && diff_dotfiles
+            in_scope services && diff_services
+            echo ""
+            if [[ "$DRIFT" -eq 0 ]]; then
+                log_info "System matches declared state."
+            else
+                log_warn "Drift detected — './cfg apply' reconciles additively."
+            fi
+            exit "$DRIFT"
+            ;;
+        apply)
+            in_scope packages && apply_packages
+            in_scope dotfiles && apply_dotfiles
+            in_scope services && apply_services
+            ;;
+        unmanaged)
+            unmanaged_packages
+            ;;
+        list)
+            log_section "Package groups"
+            local group
+            for group in $(pkgs_groups); do
+                printf '  %-20s (%s) %s\n' "$group" "$(pkgs_list_directive "$group")" "$(pkgs_from_list "$group" | wc -w) packages"
+            done
+            log_section "Dotfiles"
+            dotfiles_manifest | sed 's/^/  /'
+            log_section "Services"
+            services_manifest | sed 's/^/  /'
+            ;;
+        ""|-h|--help|help)
+            usage
+            ;;
+        *)
+            echo "Unknown verb: $verb" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+}
+
+main "$@"

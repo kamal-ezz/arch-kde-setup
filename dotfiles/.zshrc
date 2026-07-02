@@ -186,11 +186,6 @@ _path_prepend_existing "$BUN_INSTALL/bin"
 # opencode
 _path_prepend_existing "$HOME/.opencode/bin"
 
-# The next line enables shell command completion for gcloud.
-if [[ -f "$HOME/.local/share/google-cloud-sdk/completion.zsh.inc" ]]; then
-  source "$HOME/.local/share/google-cloud-sdk/completion.zsh.inc"
-fi
-
 # >>> grok installer >>>
 _path_prepend_existing "$HOME/.grok/bin"
 # <<< grok installer <<<
@@ -209,3 +204,9 @@ unfunction _path_prepend_existing 2>/dev/null || true
 #THIS MUST BE AT THE END OF THE FILE FOR SDKMAN TO WORK!!!
 export SDKMAN_DIR="$HOME/.sdkman"
 [[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]] && source "$HOME/.sdkman/bin/sdkman-init.sh"
+
+# The next line updates PATH for the Google Cloud SDK.
+if [ -f '/home/kamal/google-cloud-sdk/path.zsh.inc' ]; then . '/home/kamal/google-cloud-sdk/path.zsh.inc'; fi
+
+# The next line enables shell command completion for gcloud.
+if [ -f '/home/kamal/google-cloud-sdk/completion.zsh.inc' ]; then . '/home/kamal/google-cloud-sdk/completion.zsh.inc'; fi

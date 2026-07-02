@@ -168,7 +168,11 @@ log_info "Dolphin and file dialog settings applied."
 
 log_section "Default apps"
 
-if [[ -f /usr/share/applications/firefox.desktop ]] || [[ -f "$HOME/.local/share/applications/firefox.desktop" ]]; then
+if [[ -f /usr/share/applications/brave-browser.desktop ]] || [[ -f "$HOME/.local/share/applications/brave-browser.desktop" ]]; then
+    xdg-settings set default-web-browser brave-browser.desktop 2>/dev/null && \
+        log_info "Default browser: Brave." || \
+        log_warn "Could not set default browser"
+elif [[ -f /usr/share/applications/firefox.desktop ]] || [[ -f "$HOME/.local/share/applications/firefox.desktop" ]]; then
     xdg-settings set default-web-browser firefox.desktop 2>/dev/null && \
         log_info "Default browser: Firefox." || \
         log_warn "Could not set default browser"

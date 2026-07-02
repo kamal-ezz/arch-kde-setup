@@ -1,3 +1,5 @@
 [user]
 	name = ezzkamal
 	email = kamal.ezzarmou@imedia24.de
+[core]
+	sshCommand = ssh -i ~/.ssh/id_ed25519_imedia24_github -o IdentitiesOnly=yes

@@ -23,6 +23,8 @@ source "$SCRIPT_DIR/lib/colors.sh"
 source "$SCRIPT_DIR/lib/utils.sh"
 source "$SCRIPT_DIR/lib/distro.sh"
 source "$SCRIPT_DIR/lib/packages.sh"
+DOTFILES_BACKUP_DIR="$BACKUP_DIR"
+source "$SCRIPT_DIR/lib/dotfiles.sh"
 source "$SCRIPT_DIR/lib/checks.sh"
 
 summary_ok()   { SUMMARY+=("  ${GREEN}✓${NC}  $*"); }
@@ -55,6 +57,7 @@ list_sections() {
     echo "  virt         Virtualization (KVM/QEMU)"
     echo "  snapper      Btrfs snapshots (skipped if not Btrfs)"
     echo "  vscode       VS Code extensions + Catppuccin Mocha theme"
+    echo "  brave        Brave Browser install + flags + profile declutter"
     echo "  kde          KDE Plasma-only configuration"
     echo "  dotfiles     Install dotfiles into \$HOME (real files, not symlinks)"
     echo "  shell-default  Set zsh as default shell"
@@ -131,7 +134,7 @@ section_supported_on_desktop() {
 # Sections that require internet access.
 NETWORK_SECTIONS=(
     repos upgrade packages ms-fonts extra-tools ghostty flatpak steam-components
-    asus fonts shell node ssh services power vscode virt snapper
+    asus fonts shell node ssh services power vscode brave virt snapper
 )
 
 section_needs_internet() {
@@ -274,6 +277,7 @@ install_packages() {
                 $(pkgs_gaming) \
                 $(pkgs_steam) \
                 $(pkgs_themes) \
+                $(pkgs_browser) \
                 $(pkgs_qt) \
                 $(pkgs_fonts_arabic) \
                 $(pkgs_bluetooth)
@@ -1393,7 +1397,10 @@ configure_kde() {
     kde_write kdeglobals "KFileDialog Settings" "Sort directories first" true
 
     # Default apps
-    if [[ -f /usr/share/applications/firefox.desktop ]] || [[ -f "$HOME/.local/share/applications/firefox.desktop" ]]; then
+    if [[ -f /usr/share/applications/brave-browser.desktop ]] || [[ -f "$HOME/.local/share/applications/brave-browser.desktop" ]]; then
+        xdg-settings set default-web-browser brave-browser.desktop 2>/dev/null || \
+            log_warn "Could not set default browser"
+    elif [[ -f /usr/share/applications/firefox.desktop ]] || [[ -f "$HOME/.local/share/applications/firefox.desktop" ]]; then
         xdg-settings set default-web-browser firefox.desktop 2>/dev/null || \
             log_warn "Could not set default browser"
     fi
@@ -1421,79 +1428,55 @@ configure_kde() {
     summary_ok "KDE Plasma configuration"
 }
 
-# ─── Section 22: Dotfiles ────────────────────────────────────────────────────
+# ─── Section 22: Brave Browser ───────────────────────────────────────────────
 
-setup_dotfiles() {
-    log_section "Section 22: Dotfiles"
-
-    local FILES=(
-        ".zshrc"
-        ".p10k.zsh"
-        ".gitconfig"
-        ".gitconfig-work"
-        ".gitconfig-imedia24"
-        ".config/ghostty/config"
-        ".config/fastfetch/config.jsonc"
-        ".config/fontconfig/fonts.conf"
-        ".config/fontconfig/conf.d/99-kamal-prefer-inter.conf"
-        ".config/mozilla/firefox/user.js"
-        ".config/Code/User/settings.json"
-        ".config/opencode/opencode.jsonc"
-        ".pi/agent/settings.json"
-        ".pi/agent/keybindings.json"
-    )
-
-    FILES+=(
-        ".local/bin/fix-steam-shortcuts"
-        ".config/systemd/user/fix-steam-shortcuts.service"
-        ".config/systemd/user/fix-steam-shortcuts.path"
-    )
-
-    for file in "${FILES[@]}"; do
-        local source="$DOTFILES_DIR/$file"
-        local target="$HOME/$file"
-
-        case "$file" in
-            .config/mozilla/firefox/user.js)
-                local firefox_profile
-                firefox_profile=$(grep '^Path=' "$HOME/.config/mozilla/firefox/profiles.ini" 2>/dev/null | head -1 | cut -d= -f2 || true)
-                if [[ -n "$firefox_profile" ]]; then
-                    target="$HOME/.config/mozilla/firefox/$firefox_profile/user.js"
-                else
-                    log_warn "Firefox profile not found for $file — skipping"
-                    continue
-                fi
-                ;;
-        esac
-
-        if [[ ! -f "$source" ]]; then
-            log_warn "Not found in dotfiles: $file — skipping"
-            continue
-        fi
-
-        mkdir -p "$(dirname "$target")"
-
-        if [[ -L "$target" ]]; then
-            # Legacy symlink (this repo used to ln -s into dotfiles/). Drop it
-            # silently — the copy below is the new source of truth.
-            rm -f "$target"
-        elif [[ -e "$target" ]] && ! cmp -s "$source" "$target"; then
-            mkdir -p "$BACKUP_DIR/$(dirname "$file")"
-            mv "$target" "$BACKUP_DIR/$file"
-            log_warn "Backed up $target → $BACKUP_DIR/$file"
-        fi
-
-        cp -p "$source" "$target"
-        log_info "Installed ~/$file"
-    done
-
-    summary_ok "Dotfiles"
+# Tracked files are symlinked from the repo; see lib/dotfiles.sh.
+install_tracked_file() {
+    link_tracked_file "$@"
 }
 
-# ─── Section 23: Default Shell ───────────────────────────────────────────────
+setup_brave() {
+    log_section "Section 22: Brave Browser"
+
+    pkg_install brave-bin
+
+    install_tracked_file ".config/brave-flags.conf"
+    install_tracked_file ".config/brave-rice.json"
+    install_tracked_file ".local/bin/apply-brave-rice"
+
+    local brave_rice_script="$HOME/.local/bin/apply-brave-rice"
+    if [[ ! -x "$brave_rice_script" ]]; then
+        brave_rice_script="$DOTFILES_DIR/.local/bin/apply-brave-rice"
+    fi
+
+    if [[ -x "$brave_rice_script" ]]; then
+        "$brave_rice_script" || log_warn "Brave rice apply exited non-zero"
+    else
+        log_warn "Brave rice script is missing"
+    fi
+
+    summary_ok "Brave Browser"
+}
+
+# ─── Section 23: Dotfiles ────────────────────────────────────────────────────
+
+setup_dotfiles() {
+    log_section "Section 23: Dotfiles"
+
+    # The dotfiles/ tree is the manifest: every file in it gets symlinked
+    # into $HOME. Adding a tracked config = dropping the file into dotfiles/.
+    local file
+    while IFS= read -r file; do
+        link_tracked_file "$file"
+    done < <(dotfiles_manifest)
+
+    summary_ok "Dotfiles (symlinked from repo)"
+}
+
+# ─── Section 24: Default Shell ───────────────────────────────────────────────
 
 set_default_shell() {
-    log_section "Section 23: Default Shell"
+    log_section "Section 24: Default Shell"
 
     local ZSH_PATH
     ZSH_PATH="$(command -v zsh || true)"
@@ -1583,6 +1566,7 @@ main() {
     run_section virt          setup_virtualization
     run_section snapper       setup_snapper
     run_section vscode        setup_vscode
+    run_section brave         setup_brave
     run_section kde           configure_kde
     run_section dotfiles      setup_dotfiles
     run_section shell-default set_default_shell

@@ -1,0 +1,8 @@
+# Media playback + codecs
+vlc
+vlc-plugin-ffmpeg
+ffmpeg
+gst-plugins-good
+gst-plugins-bad
+gst-plugins-ugly
+gst-libav

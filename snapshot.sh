@@ -2,20 +2,25 @@
 # Capture current OS config state into this repo and push.
 # Run from any directory — it always operates on the repo it lives in.
 #
-# Dotfiles are copied (not symlinked) into $HOME by setup.sh, so this script is
-# the only way host edits get back into the repo. Re-run it after any local
-# tweak you want to keep.
+# Tracked dotfiles are symlinked into $HOME (see lib/dotfiles.sh), so host
+# edits land in the repo directly and capture is a no-op for them — this
+# script then just commits and pushes. capture() still copies any file that
+# is not yet a symlink into the repo (e.g. on a freshly tracked config).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/colors.sh"
 
-# Copy a single file into the dotfiles tree, skipping if source doesn't exist.
+# Copy a single file into the dotfiles tree, skipping if source doesn't exist
+# or is already a symlink into the repo.
 capture() {
     local src="$1" rel="$2"
     local dest="$SCRIPT_DIR/dotfiles/$rel"
     if [[ ! -f "$src" ]]; then
         log_warn "Not found: $src — skipping"
+        return
+    fi
+    if [[ -L "$src" && "$(readlink -f "$src")" == "$SCRIPT_DIR/dotfiles/"* ]]; then
         return
     fi
     mkdir -p "$(dirname "$dest")"
@@ -37,6 +42,8 @@ capture "$HOME/.gitconfig-imedia24" ".gitconfig-imedia24"
 
 log_section "App configs"
 
+capture "$HOME/.config/brave-flags.conf"           ".config/brave-flags.conf"
+capture "$HOME/.config/brave-rice.json"            ".config/brave-rice.json"
 capture "$HOME/.config/ghostty/config"           ".config/ghostty/config"
 capture "$HOME/.config/fastfetch/config.jsonc"   ".config/fastfetch/config.jsonc"
 capture "$HOME/.config/fontconfig/fonts.conf"    ".config/fontconfig/fonts.conf"
@@ -63,6 +70,7 @@ capture "$HOME/.pi/agent/mcp.json"         ".pi/agent/mcp.json"
 
 log_section "Steam shortcut fixer"
 
+capture "$HOME/.local/bin/apply-brave-rice"                             ".local/bin/apply-brave-rice"
 capture "$HOME/.local/bin/fix-steam-shortcuts"                          ".local/bin/fix-steam-shortcuts"
 capture "$HOME/.config/systemd/user/fix-steam-shortcuts.service"        ".config/systemd/user/fix-steam-shortcuts.service"
 capture "$HOME/.config/systemd/user/fix-steam-shortcuts.path"           ".config/systemd/user/fix-steam-shortcuts.path"
@@ -84,12 +92,8 @@ fi
 log_section "KDE"
 log_info "KDE Plasma settings are managed by sync-kde.sh — edit that file to change them"
 
-KAMAL_TWEAKS_SRC="$HOME/.local/share/themes/kamal-tweaks"
-if [[ -d "$KAMAL_TWEAKS_SRC" ]]; then
-    mkdir -p "$SCRIPT_DIR/dotfiles/.local/share/themes"
-    cp -r "$KAMAL_TWEAKS_SRC" "$SCRIPT_DIR/dotfiles/.local/share/themes/"
-    log_info "kamal-tweaks theme captured."
-fi
+# kamal-tweaks theme files live in dotfiles/ and are symlinked like any other
+# tracked file — nothing to capture.
 
 # ─── Commit & push ────────────────────────────────────────────────────────────
 

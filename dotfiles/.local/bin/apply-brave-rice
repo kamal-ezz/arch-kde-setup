@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BRAVE_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/BraveSoftware/Brave-Browser"
+PREFS_FILE="$BRAVE_DIR/Default/Preferences"
+RICE_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/brave-rice.json"
+
+if pgrep -x brave >/dev/null 2>&1; then
+    echo "Brave is running; close it before applying rice." >&2
+    exit 1
+fi
+
+if [[ ! -f "$RICE_FILE" ]]; then
+    echo "Missing Brave rice file: $RICE_FILE" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$PREFS_FILE")"
+if [[ ! -f "$PREFS_FILE" ]]; then
+    printf '{}\n' > "$PREFS_FILE"
+fi
+
+python3 - "$PREFS_FILE" "$RICE_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+prefs_path = Path(sys.argv[1])
+rice_path = Path(sys.argv[2])
+
+with prefs_path.open() as f:
+    prefs = json.load(f)
+with rice_path.open() as f:
+    rice = json.load(f)
+
+def merge(dst, src):
+    for key, value in src.items():
+        if isinstance(value, dict):
+            node = dst.get(key)
+            if not isinstance(node, dict):
+                node = {}
+                dst[key] = node
+            merge(node, value)
+        else:
+            dst[key] = value
+
+merge(prefs, rice)
+
+tmp_path = prefs_path.with_suffix(".tmp")
+with tmp_path.open("w") as f:
+    json.dump(prefs, f, indent=2, sort_keys=True)
+    f.write("\n")
+tmp_path.replace(prefs_path)
+PY
+
+echo "Brave rice applied."

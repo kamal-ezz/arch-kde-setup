@@ -1,0 +1,24 @@
+{
+  "brave": {
+    "ai_chat": {
+      "context_menu_enabled": false,
+      "show_toolbar_button": false,
+      "storage_enabled": false,
+      "tab_organization_enabled": false
+    },
+    "rewards": {
+      "show_brave_rewards_button_in_location_bar": false
+    },
+    "sidebar": {
+      "hidden_built_in_items": [
+        7
+      ]
+    },
+    "wallet": {
+      "show_wallet_icon_on_toolbar": false
+    }
+  },
+  "browser": {
+    "show_home_button": false
+  }
+}

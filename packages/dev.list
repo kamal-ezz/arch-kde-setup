@@ -1,0 +1,9 @@
+# Development toolchain
+podman
+python
+python-pip
+go
+gcc
+make
+cmake
+clang
